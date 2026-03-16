@@ -5,7 +5,7 @@ go 1.24.4
 toolchain go1.24.9
 
 require (
-	github.com/AgnopraxLab/D2PFuzz v0.0.0-20251019074538-abe358f75682
+	github.com/1033309821/ECST v0.0.0-20251019074538-abe358f75682
 	github.com/MariusVanDerWijden/FuzzyVM v0.0.0-20250228190626-b582843c9dbe
 	github.com/ethereum/go-ethereum v1.16.2
 	github.com/urfave/cli/v2 v2.27.5

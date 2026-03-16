@@ -6,20 +6,20 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/AgnopraxLab/D2PFuzz/utils"
+	"https://github.com/1033309821/ECST/utils"
 )
 
 // MutationStrategy defines the interface for different mutation strategies
 type MutationStrategy interface {
 	// Name returns the name of the mutation strategy
 	Name() string
-	
+
 	// Mutate applies mutation to the input data and returns mutated data
 	Mutate(data []byte, config *MutationConfig) ([]byte, error)
-	
+
 	// CanMutate checks if this strategy can mutate the given data
 	CanMutate(data []byte) bool
-	
+
 	// Priority returns the priority of this strategy (higher = more priority)
 	Priority() int
 }
@@ -47,13 +47,13 @@ type Mutator struct {
 // NewMutator creates a new mutation manager
 func NewMutator(config *MutationConfig, logger utils.Logger) *Mutator {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Initialize random number generator
 	seed := config.Seed
 	if seed == 0 {
 		seed = time.Now().UnixNano()
 	}
-	
+
 	return &Mutator{
 		strategies: make([]MutationStrategy, 0),
 		config:     config,

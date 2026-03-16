@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AgnopraxLab/D2PFuzz/config"
-	"github.com/AgnopraxLab/D2PFuzz/utils"
+	"https://github.com/1033309821/ECST/config"
+	"https://github.com/1033309821/ECST/utils"
 )
 
 // SoftLimitTest tests all clients' soft limit implementation

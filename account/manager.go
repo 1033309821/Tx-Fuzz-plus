@@ -1,6 +1,6 @@
 package account
 
-import "github.com/AgnopraxLab/D2PFuzz/config"
+import "https://github.com/1033309821/ECST/config"
 
 // AccountManager manages polling different accounts
 type AccountManager struct {
@@ -47,4 +47,3 @@ func (am *AccountManager) GetAccountByIndex(index int) config.Account {
 func (am *AccountManager) GetTotalAccounts() int {
 	return len(am.accounts)
 }
-

@@ -10,7 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/rlp"
 
-	"github.com/AgnopraxLab/D2PFuzz/mutation"
+	"https://github.com/1033309821/ECST/mutation"
 )
 
 // RLP encoding constants
@@ -47,7 +47,7 @@ func (r *RLPMutator) CanMutate(data []byte) bool {
 	if len(data) == 0 {
 		return false
 	}
-	
+
 	// Check if data looks like RLP encoded
 	return r.isValidRLP(data)
 }
@@ -101,12 +101,12 @@ func (r *RLPMutator) mutateLengthFields(data []byte, config *mutation.MutationCo
 	// Find and mutate length fields
 	for i := 0; i < len(mutated); i++ {
 		b := mutated[i]
-		
+
 		// Check if this byte is a length indicator
 		if r.isLengthIndicator(b) {
 			if r.rng.Float64() < config.RLP.LengthMutationRate {
 				mutated[i] = r.mutateLengthByte(b)
-				
+
 				// If it's a long form, also mutate the length bytes
 				if r.isLongForm(b) {
 					lengthBytes := r.getLengthByteCount(b)
@@ -135,7 +135,7 @@ func (r *RLPMutator) mutateTypeIndicators(data []byte, config *mutation.Mutation
 	// Mutate type indicators
 	for i := 0; i < len(mutated); i++ {
 		b := mutated[i]
-		
+
 		if r.isTypeIndicator(b) && r.rng.Float64() < config.RLP.TypeMutationRate {
 			// Convert between different RLP types
 			mutated[i] = r.mutateTypeByte(b)
@@ -161,7 +161,7 @@ func (r *RLPMutator) mutateStructure(data []byte, config *mutation.MutationConfi
 
 	// Apply structural mutations to decoded data
 	mutatedDecoded := r.mutateDecodedStructure(decoded, config, 0)
-	
+
 	// Re-encode
 	return rlp.EncodeToBytes(mutatedDecoded)
 }
@@ -192,15 +192,15 @@ func (r *RLPMutator) injectMalformedRLP(data []byte, config *mutation.MutationCo
 		// Invalid length encoding
 		{0xb8, 0x00}, // Long string with zero length
 		{0xf8, 0x00}, // Long list with zero length
-		
+
 		// Inconsistent length
 		{0x85, 0x01, 0x02}, // Claims 5 bytes but only has 2
 		{0xc3, 0x01},       // Claims 3 bytes list but only has 1
-		
+
 		// Invalid type transitions
 		{0x80, 0xc0}, // String followed by list marker
 		{0xc0, 0x80}, // List followed by string marker
-		
+
 		// Extreme values
 		{0xbf, 0xff, 0xff, 0xff, 0xff}, // Maximum long string length
 		{0xff, 0xff, 0xff, 0xff, 0xff}, // Maximum long list length
@@ -208,18 +208,18 @@ func (r *RLPMutator) injectMalformedRLP(data []byte, config *mutation.MutationCo
 
 	// Choose random pattern
 	pattern := malformedPatterns[r.rng.Intn(len(malformedPatterns))]
-	
+
 	// Inject at random position
 	if len(data) == 0 {
 		return pattern, nil
 	}
-	
+
 	insertPos := r.rng.Intn(len(data) + 1)
 	result := make([]byte, 0, len(data)+len(pattern))
 	result = append(result, data[:insertPos]...)
 	result = append(result, pattern...)
 	result = append(result, data[insertPos:]...)
-	
+
 	return result, nil
 }
 
@@ -310,7 +310,7 @@ func (r *RLPMutator) mutateRawStructure(data []byte, config *mutation.MutationCo
 		markers := []byte{0x80, 0xc0, 0x81, 0xc1} // Various RLP type markers
 		marker := markers[r.rng.Intn(len(markers))]
 		insertPos := r.rng.Intn(len(mutated) + 1)
-		
+
 		result := make([]byte, 0, len(mutated)+1)
 		result = append(result, mutated[:insertPos]...)
 		result = append(result, marker)
@@ -418,7 +418,7 @@ func (r *RLPMutator) mutateBigInt(bi *big.Int, config *mutation.MutationConfig) 
 	}
 
 	result := new(big.Int).Set(bi)
-	
+
 	// Apply random mutations
 	switch r.rng.Intn(4) {
 	case 0:

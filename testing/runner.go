@@ -3,7 +3,7 @@ package testing
 import (
 	"fmt"
 
-	"github.com/AgnopraxLab/D2PFuzz/config"
+	"https://github.com/1033309821/ECST/config"
 )
 
 // TestRunner defines the interface for all test modes

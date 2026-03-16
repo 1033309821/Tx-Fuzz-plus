@@ -11,7 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
 
-	"github.com/AgnopraxLab/D2PFuzz/mutation"
+	"https://github.com/1033309821/ECST/mutation"
 )
 
 // ETH protocol message codes
@@ -42,7 +42,7 @@ func NewETHGenerator(config *mutation.MutationConfig) *ETHGenerator {
 	if seed == 0 {
 		seed = time.Now().UnixNano()
 	}
-	
+
 	return &ETHGenerator{
 		rng:    mathrand.New(mathrand.NewSource(seed)),
 		config: config,
@@ -89,7 +89,7 @@ func (g *ETHGenerator) GenerateRandomMessage() ([]byte, error) {
 		BlockBodiesMsg, NewBlockMsg, GetNodeDataMsg,
 		NodeDataMsg, GetReceiptsMsg, ReceiptsMsg,
 	}
-	
+
 	msgType := msgTypes[g.rng.Intn(len(msgTypes))]
 	return g.GenerateMessage(msgType)
 }
@@ -120,7 +120,7 @@ func (g *ETHGenerator) GenerateStatusMessage() ([]byte, error) {
 			Next: uint64(g.rng.Uint32()),
 		},
 	}
-	
+
 	return rlp.EncodeToBytes(status)
 }
 
@@ -131,7 +131,7 @@ func (g *ETHGenerator) GenerateNewBlockHashesMessage() ([]byte, error) {
 		Hash   common.Hash
 		Number uint64
 	}, count)
-	
+
 	for i := 0; i < count; i++ {
 		hashes[i] = struct {
 			Hash   common.Hash
@@ -141,7 +141,7 @@ func (g *ETHGenerator) GenerateNewBlockHashesMessage() ([]byte, error) {
 			Number: uint64(g.rng.Uint32()) % g.config.ETH.MaxBlockNumber,
 		}
 	}
-	
+
 	return rlp.EncodeToBytes(hashes)
 }
 
@@ -149,7 +149,7 @@ func (g *ETHGenerator) GenerateNewBlockHashesMessage() ([]byte, error) {
 func (g *ETHGenerator) GenerateTransactionsMessage() ([]byte, error) {
 	count := g.rng.Intn(5) + 1
 	txs := make([]*types.Transaction, count)
-	
+
 	for i := 0; i < count; i++ {
 		tx, err := g.generateRandomTransaction()
 		if err != nil {
@@ -157,7 +157,7 @@ func (g *ETHGenerator) GenerateTransactionsMessage() ([]byte, error) {
 		}
 		txs[i] = tx
 	}
-	
+
 	return rlp.EncodeToBytes(txs)
 }
 
@@ -174,7 +174,7 @@ func (g *ETHGenerator) GenerateGetBlockHeadersMessage() ([]byte, error) {
 		Skip:    uint64(g.rng.Intn(10)),
 		Reverse: g.rng.Intn(2) == 0,
 	}
-	
+
 	return rlp.EncodeToBytes(request)
 }
 
@@ -182,11 +182,11 @@ func (g *ETHGenerator) GenerateGetBlockHeadersMessage() ([]byte, error) {
 func (g *ETHGenerator) GenerateBlockHeadersMessage() ([]byte, error) {
 	count := g.rng.Intn(10) + 1
 	headers := make([]*types.Header, count)
-	
+
 	for i := 0; i < count; i++ {
 		headers[i] = g.generateRandomHeader()
 	}
-	
+
 	return rlp.EncodeToBytes(headers)
 }
 
@@ -194,11 +194,11 @@ func (g *ETHGenerator) GenerateBlockHeadersMessage() ([]byte, error) {
 func (g *ETHGenerator) GenerateGetBlockBodiesMessage() ([]byte, error) {
 	count := g.rng.Intn(10) + 1
 	hashes := make([]common.Hash, count)
-	
+
 	for i := 0; i < count; i++ {
 		hashes[i] = g.generateRandomHash()
 	}
-	
+
 	return rlp.EncodeToBytes(hashes)
 }
 
@@ -206,11 +206,11 @@ func (g *ETHGenerator) GenerateGetBlockBodiesMessage() ([]byte, error) {
 func (g *ETHGenerator) GenerateBlockBodiesMessage() ([]byte, error) {
 	count := g.rng.Intn(5) + 1
 	bodies := make([]*types.Body, count)
-	
+
 	for i := 0; i < count; i++ {
 		bodies[i] = g.generateRandomBody()
 	}
-	
+
 	return rlp.EncodeToBytes(bodies)
 }
 
@@ -223,7 +223,7 @@ func (g *ETHGenerator) GenerateNewBlockMessage() ([]byte, error) {
 		Block: g.generateRandomBlock(),
 		TD:    big.NewInt(int64(g.rng.Uint64())),
 	}
-	
+
 	return rlp.EncodeToBytes(block)
 }
 
@@ -231,11 +231,11 @@ func (g *ETHGenerator) GenerateNewBlockMessage() ([]byte, error) {
 func (g *ETHGenerator) GenerateGetNodeDataMessage() ([]byte, error) {
 	count := g.rng.Intn(10) + 1
 	hashes := make([]common.Hash, count)
-	
+
 	for i := 0; i < count; i++ {
 		hashes[i] = g.generateRandomHash()
 	}
-	
+
 	return rlp.EncodeToBytes(hashes)
 }
 
@@ -243,13 +243,13 @@ func (g *ETHGenerator) GenerateGetNodeDataMessage() ([]byte, error) {
 func (g *ETHGenerator) GenerateNodeDataMessage() ([]byte, error) {
 	count := g.rng.Intn(10) + 1
 	data := make([][]byte, count)
-	
+
 	for i := 0; i < count; i++ {
 		length := g.rng.Intn(1024) + 1
 		data[i] = make([]byte, length)
 		rand.Read(data[i])
 	}
-	
+
 	return rlp.EncodeToBytes(data)
 }
 
@@ -257,11 +257,11 @@ func (g *ETHGenerator) GenerateNodeDataMessage() ([]byte, error) {
 func (g *ETHGenerator) GenerateGetReceiptsMessage() ([]byte, error) {
 	count := g.rng.Intn(10) + 1
 	hashes := make([]common.Hash, count)
-	
+
 	for i := 0; i < count; i++ {
 		hashes[i] = g.generateRandomHash()
 	}
-	
+
 	return rlp.EncodeToBytes(hashes)
 }
 
@@ -269,16 +269,16 @@ func (g *ETHGenerator) GenerateGetReceiptsMessage() ([]byte, error) {
 func (g *ETHGenerator) GenerateReceiptsMessage() ([]byte, error) {
 	count := g.rng.Intn(5) + 1
 	receipts := make([][]*types.Receipt, count)
-	
+
 	for i := 0; i < count; i++ {
 		receiptCount := g.rng.Intn(10) + 1
 		receipts[i] = make([]*types.Receipt, receiptCount)
-		
+
 		for j := 0; j < receiptCount; j++ {
 			receipts[i][j] = g.generateRandomReceipt()
 		}
 	}
-	
+
 	return rlp.EncodeToBytes(receipts)
 }
 
@@ -309,14 +309,14 @@ func (g *ETHGenerator) generateBlockOrigin() interface{} {
 func (g *ETHGenerator) generateRandomTransaction() (*types.Transaction, error) {
 	// Generate different transaction types
 	txType := g.rng.Intn(3) // 0: Legacy, 1: EIP-2930, 2: EIP-1559
-	
+
 	to := g.generateRandomAddress()
 	// Ensure positive values to avoid RLP encoding errors
 	value := big.NewInt(int64(g.rng.Uint32() % 1000000)) // Smaller positive values
-	gasLimit := uint64(21000 + g.rng.Uint32()%100000)   // Reasonable gas limit
+	gasLimit := uint64(21000 + g.rng.Uint32()%100000)    // Reasonable gas limit
 	data := make([]byte, g.rng.Intn(256))                // Smaller data size
 	rand.Read(data)
-	
+
 	switch txType {
 	case 0:
 		// Legacy transaction
@@ -329,7 +329,7 @@ func (g *ETHGenerator) generateRandomTransaction() (*types.Transaction, error) {
 			gasPrice,
 			data,
 		), nil
-		
+
 	case 1:
 		// EIP-2930 transaction
 		gasPrice := big.NewInt(int64(1000000000 + g.rng.Uint32()%3000000000)) // 1-4 Gwei
@@ -344,10 +344,10 @@ func (g *ETHGenerator) generateRandomTransaction() (*types.Transaction, error) {
 			Data:       data,
 			AccessList: accessList,
 		}), nil
-		
+
 	case 2:
 		// EIP-1559 transaction
-		gasTipCap := big.NewInt(int64(1000000000 + g.rng.Uint32()%2000000000))  // 1-3 Gwei
+		gasTipCap := big.NewInt(int64(1000000000 + g.rng.Uint32()%2000000000)) // 1-3 Gwei
 		gasFeeCap := big.NewInt(int64(3000000000 + g.rng.Uint32()%1000000000)) // 3-4 Gwei
 		accessList := g.generateRandomAccessList()
 		return types.NewTx(&types.DynamicFeeTx{
@@ -361,7 +361,7 @@ func (g *ETHGenerator) generateRandomTransaction() (*types.Transaction, error) {
 			Data:       data,
 			AccessList: accessList,
 		}), nil
-		
+
 	default:
 		return nil, fmt.Errorf("invalid transaction type: %d", txType)
 	}
@@ -370,21 +370,21 @@ func (g *ETHGenerator) generateRandomTransaction() (*types.Transaction, error) {
 func (g *ETHGenerator) generateRandomAccessList() types.AccessList {
 	count := g.rng.Intn(5)
 	accessList := make(types.AccessList, count)
-	
+
 	for i := 0; i < count; i++ {
 		storageKeyCount := g.rng.Intn(10)
 		storageKeys := make([]common.Hash, storageKeyCount)
-		
+
 		for j := 0; j < storageKeyCount; j++ {
 			storageKeys[j] = g.generateRandomHash()
 		}
-		
+
 		accessList[i] = types.AccessTuple{
 			Address:     g.generateRandomAddress(),
 			StorageKeys: storageKeys,
 		}
 	}
-	
+
 	return accessList
 }
 
@@ -412,14 +412,14 @@ func (g *ETHGenerator) generateRandomHeader() *types.Header {
 func (g *ETHGenerator) generateRandomBody() *types.Body {
 	txCount := g.rng.Intn(5) // Reduce transaction count
 	txs := make([]*types.Transaction, 0, txCount)
-	
+
 	for i := 0; i < txCount; i++ {
 		tx, err := g.generateRandomTransaction()
 		if err == nil && tx != nil {
 			txs = append(txs, tx)
 		}
 	}
-	
+
 	return &types.Body{
 		Transactions: txs,
 		Uncles:       []*types.Header{}, // Empty uncles for simplicity
@@ -428,13 +428,13 @@ func (g *ETHGenerator) generateRandomBody() *types.Body {
 
 func (g *ETHGenerator) generateRandomBlock() *types.Block {
 	header := g.generateRandomHeader()
-	
+
 	// Create empty body to avoid nil pointer issues
 	body := &types.Body{
 		Transactions: []*types.Transaction{},
 		Uncles:       []*types.Header{},
 	}
-	
+
 	// Create block with proper parameters - use empty receipts and withdrawals
 	receipts := types.Receipts{}
 	return types.NewBlock(header, body, receipts, nil)
@@ -467,7 +467,7 @@ func (g *ETHGenerator) GenerateMalformedMessage() ([]byte, error) {
 		g.generateMissingFieldsMessage,
 		g.generateExtraFieldsMessage,
 	}
-	
+
 	generatorIndex := g.rng.Intn(len(malformedTypes))
 	return malformedTypes[generatorIndex]()
 }
@@ -478,12 +478,12 @@ func (g *ETHGenerator) generateTruncatedMessage() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if len(normalMsg) > 1 {
 		truncateAt := g.rng.Intn(len(normalMsg)-1) + 1
 		return normalMsg[:truncateAt], nil
 	}
-	
+
 	return normalMsg, nil
 }
 
@@ -497,12 +497,12 @@ func (g *ETHGenerator) generateOversizedMessage() ([]byte, error) {
 func (g *ETHGenerator) generateInvalidRLPMessage() ([]byte, error) {
 	// Generate invalid RLP structures
 	invalidPatterns := [][]byte{
-		{0xc0, 0x80}, // Empty list followed by empty string
+		{0xc0, 0x80},       // Empty list followed by empty string
 		{0x85, 0x01, 0x02}, // Claims 5 bytes but only has 2
-		{0xf8, 0x00}, // Long list with zero length
+		{0xf8, 0x00},       // Long list with zero length
 		{0xbf, 0xff, 0xff}, // Invalid long string
 	}
-	
+
 	pattern := invalidPatterns[g.rng.Intn(len(invalidPatterns))]
 	return pattern, nil
 }
@@ -515,7 +515,7 @@ func (g *ETHGenerator) generateMissingFieldsMessage() ([]byte, error) {
 	}{
 		ProtocolVersion: uint32(g.config.ETH.TargetProtocolVersion),
 	}
-	
+
 	return rlp.EncodeToBytes(incompleteStatus)
 }
 
@@ -538,6 +538,6 @@ func (g *ETHGenerator) generateExtraFieldsMessage() ([]byte, error) {
 		ExtraField1:     make([]byte, 32),
 		ExtraField2:     uint64(g.rng.Uint64()),
 	}
-	
+
 	return rlp.EncodeToBytes(extendedStatus)
 }

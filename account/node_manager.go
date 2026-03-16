@@ -3,7 +3,7 @@ package account
 import (
 	"fmt"
 
-	"github.com/AgnopraxLab/D2PFuzz/config"
+	"https://github.com/1033309821/ECST/config"
 )
 
 // NodeAccount represents single node account information
@@ -108,4 +108,3 @@ func (nam *NodeAccountManager) GetCurrentNonce(nodeIndex int) uint64 {
 	}
 	return 0
 }
-

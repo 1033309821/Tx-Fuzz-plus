@@ -1,4 +1,4 @@
-module github.com/AgnopraxLab/D2PFuzz
+module github.com/1033309821/ECST
 
 go 1.24.4
 

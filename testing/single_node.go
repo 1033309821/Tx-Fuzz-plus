@@ -5,11 +5,11 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/AgnopraxLab/D2PFuzz/account"
-	"github.com/AgnopraxLab/D2PFuzz/config"
-	"github.com/AgnopraxLab/D2PFuzz/ethclient"
-	"github.com/AgnopraxLab/D2PFuzz/transaction"
-	"github.com/AgnopraxLab/D2PFuzz/utils"
+	"https://github.com/1033309821/ECST/account"
+	"https://github.com/1033309821/ECST/config"
+	"https://github.com/1033309821/ECST/ethclient"
+	"https://github.com/1033309821/ECST/transaction"
+	"https://github.com/1033309821/ECST/utils"
 
 	"github.com/ethereum/go-ethereum/common"
 )
