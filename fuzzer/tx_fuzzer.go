@@ -17,11 +17,11 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 
-	"https://github.com/1033309821/ECST/config"
-	"https://github.com/1033309821/ECST/mutation"
-	"https://github.com/1033309821/ECST/mutation/generators"
-	"https://github.com/1033309821/ECST/mutation/strategies"
-	"https://github.com/1033309821/ECST/utils"
+	"github.com/1033309821/ECST/config"
+	"github.com/1033309821/ECST/mutation"
+	"github.com/1033309821/ECST/mutation/generators"
+	"github.com/1033309821/ECST/mutation/strategies"
+	"github.com/1033309821/ECST/utils"
 )
 
 // TransactionRecord records detailed information about each transaction

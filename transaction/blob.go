@@ -9,9 +9,9 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/holiman/uint256"
 
-	"https://github.com/1033309821/ECST/blob"
-	"https://github.com/1033309821/ECST/config"
-	ethtest "https://github.com/1033309821/ECST/devp2p/protocol/eth"
+	"github.com/1033309821/ECST/blob"
+	"github.com/1033309821/ECST/config"
+	ethtest "github.com/1033309821/ECST/devp2p/protocol/eth"
 )
 
 // BlobTxBuilder provides a fluent interface for building blob transactions

@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"https://github.com/1033309821/ECST/account"
-	"https://github.com/1033309821/ECST/config"
-	"https://github.com/1033309821/ECST/ethclient"
-	"https://github.com/1033309821/ECST/transaction"
-	"https://github.com/1033309821/ECST/utils"
+	"github.com/1033309821/ECST/account"
+	"github.com/1033309821/ECST/config"
+	"github.com/1033309821/ECST/ethclient"
+	"github.com/1033309821/ECST/transaction"
+	"github.com/1033309821/ECST/utils"
 
 	"github.com/ethereum/go-ethereum/common"
 )

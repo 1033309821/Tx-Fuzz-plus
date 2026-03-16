@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"time"
 
-	"https://github.com/1033309821/ECST/utils"
+	"github.com/1033309821/ECST/utils"
 )
 
 // MutationStrategy defines the interface for different mutation strategies

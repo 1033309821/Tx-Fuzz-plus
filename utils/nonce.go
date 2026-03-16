@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"https://github.com/1033309821/ECST/ethclient"
+	"github.com/1033309821/ECST/ethclient"
 
 	"github.com/ethereum/go-ethereum/common"
 	gethclient "github.com/ethereum/go-ethereum/ethclient"

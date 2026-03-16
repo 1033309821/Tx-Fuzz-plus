@@ -11,10 +11,10 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 
-	ethtest "https://github.com/1033309821/ECST/devp2p/protocol/eth"
-	"https://github.com/1033309821/ECST/rpc"
-	"https://github.com/1033309821/ECST/transaction"
-	"https://github.com/1033309821/ECST/utils"
+	ethtest "github.com/1033309821/ECST/devp2p/protocol/eth"
+	"github.com/1033309821/ECST/rpc"
+	"github.com/1033309821/ECST/transaction"
+	"github.com/1033309821/ECST/utils"
 )
 
 /*

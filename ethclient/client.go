@@ -10,8 +10,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 
-	"https://github.com/1033309821/ECST/config"
-	ethtest "https://github.com/1033309821/ECST/devp2p/protocol/eth"
+	"github.com/1033309821/ECST/config"
+	ethtest "github.com/1033309821/ECST/devp2p/protocol/eth"
 )
 
 // Client encapsulates Ethereum client connection information

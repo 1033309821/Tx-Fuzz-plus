@@ -14,9 +14,9 @@ import (
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 
-	"https://github.com/1033309821/ECST/config"
-	ethtest "https://github.com/1033309821/ECST/devp2p/protocol/eth"
-	"https://github.com/1033309821/ECST/transaction"
+	"github.com/1033309821/ECST/config"
+	ethtest "github.com/1033309821/ECST/devp2p/protocol/eth"
+	"github.com/1033309821/ECST/transaction"
 )
 
 // TestNewPooledTransactionHashesSoftLimitWithNonceDetailed tests with custom starting nonce and returns detailed results

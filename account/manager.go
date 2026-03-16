@@ -1,6 +1,6 @@
 package account
 
-import "https://github.com/1033309821/ECST/config"
+import "github.com/1033309821/ECST/config"
 
 // AccountManager manages polling different accounts
 type AccountManager struct {

@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"https://github.com/1033309821/ECST/config"
-	"https://github.com/1033309821/ECST/fuzzer"
-	"https://github.com/1033309821/ECST/utils"
+	"github.com/1033309821/ECST/config"
+	"github.com/1033309821/ECST/fuzzer"
+	"github.com/1033309821/ECST/utils"
 )
 
 // displayStats shows real-time statistics

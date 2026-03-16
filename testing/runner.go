@@ -3,7 +3,7 @@ package testing
 import (
 	"fmt"
 
-	"https://github.com/1033309821/ECST/config"
+	"github.com/1033309821/ECST/config"
 )
 
 // TestRunner defines the interface for all test modes

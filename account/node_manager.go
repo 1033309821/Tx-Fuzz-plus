@@ -3,7 +3,7 @@ package account
 import (
 	"fmt"
 
-	"https://github.com/1033309821/ECST/config"
+	"github.com/1033309821/ECST/config"
 )
 
 // NodeAccount represents single node account information

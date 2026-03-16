@@ -36,7 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/holiman/uint256"
 
-	"https://github.com/1033309821/ECST/devp2p/protocol/eth/utesting"
+	"github.com/1033309821/ECST/devp2p/protocol/eth/utesting"
 )
 
 // Suite represents a structure used to test a node's conformance
