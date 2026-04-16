@@ -1,10 +1,12 @@
-
 server:
   host: "localhost"
   port: 8080
   timeout: 60
 
 mode: "fuzz"
+
+environment:
+  endpoints_file: "~/ethpackage/endpoints.json"
 
 tx_fuzz:
   enabled: true
@@ -21,12 +23,11 @@ tx_fuzz:
   retry_delay: 500ms
   circuit_breaker: true
   failure_threshold: 10
-  rpc_endpoints:
-    - "http://172.16.0.11:8545"
-    - "http://172.16.0.12:8545"  # Multiple RPC endpoints for improved reliability
+  # RPC endpoints are loaded dynamically from endpoints.json
 
 p2p:
   enabled: false  # Recommended to disable P2P during stress testing to focus on transaction performance
+  jwt_secret: "0xdc49981516e8e72b401a63e6405495a32dafc3939b5d6d83cc319ac0388bca1b"
 
 fuzzing:
   enabled: true

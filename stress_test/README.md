@@ -34,6 +34,8 @@ stress_test/
 ./tx_fuzz_example stress_test/stress_test_config.yaml
 ```
 
+The stress config now expects runtime node topology from `~/ethpackage/endpoints.json` (or `ECST_ENDPOINTS_FILE`). It no longer relies on hardcoded RPC/enode examples.
+
 ## Test Scenarios
 
 ### Standard Stress Test

@@ -10,10 +10,10 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN cd cmd/livefuzzer && CGO_ENABLED=0 GOOS=linux go build -o tx-fuzz.bin .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/tx-fuzz.bin ./cmd/fuzz
 
 FROM alpine:latest
 
-COPY --from=builder /build/cmd/livefuzzer/tx-fuzz.bin /tx-fuzz.bin
+COPY --from=builder /build/tx-fuzz.bin /tx-fuzz.bin
 
 ENTRYPOINT ["/tx-fuzz.bin"]

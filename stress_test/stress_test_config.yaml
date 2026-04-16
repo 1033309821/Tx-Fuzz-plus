@@ -1,5 +1,4 @@
 
-
 # Server Configuration
 server:
   host: "localhost"
@@ -7,6 +6,9 @@ server:
   timeout: 60  # 增加超时时间
 
 mode: "fuzz"
+
+environment:
+  endpoints_file: "~/ethpackage/endpoints.json"
 
 # Transaction Fuzzing Configuration - 高TPS设置
 tx_fuzz:
@@ -19,12 +21,7 @@ tx_fuzz:
   seed: 0
   use_accounts: true
   load_pattern_type: "ramp"   # 渐增模式，从低TPS逐渐增加
-  rpc_endpoints:
-    - "http://172.16.0.11:8545"
-    - "http://172.16.0.12:8545"
-    - "http://172.16.0.13:8545"
-    - "http://172.16.0.14:8545"
-    - "http://172.16.0.15:8545"
+  # 运行时 RPC endpoints 由 endpoints.json 自动覆盖
   # 激进的重试设置
   max_retries: 5
   retry_delay: 500ms  # 更短的重试间隔
@@ -35,12 +32,8 @@ tx_fuzz:
 p2p:
   max_peers: 100  # 更多的对等节点
   listen_port: 30303
-  bootstrap_nodes:
-    - "enode://4dc05589714a2025cb9accf8a548a6ab801fc7d5e8607c54d4f4f759b73cd2b0a2034a751f511e1bd8851955eff53b93c08e7ee3ab0d379824dcf5f4c49e3eac@172.16.0.11:30303"  # el-1-geth-lighthouse (geth)
-    - "enode://4584eebaae4351b5048e86d1f339292d39e4552d90d9b13893681faaa6c89983ab494a0b1d4307389cc8eb286737b6c8f3bf5c771c1d6b1317236097d8e18d55@172.16.0.12:30303"  # el-2-nethermind-lighthouse (nethermind)
-    - "enode://b83a046a364b9336763df96bbb4cae692c36558592faa58a2e20ea36b9c4f9601c7d8bf4423d9a600c8b49adad6722100f1e5e27d1823315637c9010b63c13b5@172.16.0.13:30303"  # el-3-reth-lighthouse (reth)
-    - "enode://c6706b2ff16debd4aa3b3d912d33230360a5347c84167b84065dd3a09c91b783ecab339cee3f7cc0a9e3bba62fa29facae6402efc578d3458a43b6cec0416521@172.16.0.14:30303"  # el-4-erigon-lighthouse (erigon)
-    - "enode://5d20e858157ef2088b6c5150d2b8994f8559639f7b67de968dad580c3d5b5f955b9ec01fb38c5976c4cd9a39b3237bff3c6fd369485f6dbf9d2cc7c8c17dd046@172.16.0.15:30303"  # el-5-besu-lighthouse (besu)
+  jwt_secret: "0xdc49981516e8e72b401a63e6405495a32dafc3939b5d6d83cc319ac0388bca1b"
+  # 运行时 bootstrap_nodes / node_names 由 endpoints.json 自动覆盖
 
 # Fuzzing Configuration
 fuzzing:

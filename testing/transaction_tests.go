@@ -11,10 +11,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	gethclient "github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/p2p/enode"
 
 	"github.com/1033309821/ECST/config"
-	ethtest "github.com/1033309821/ECST/devp2p/protocol/eth"
 	"github.com/1033309821/ECST/ethclient"
 	"github.com/1033309821/ECST/transaction"
 	"github.com/1033309821/ECST/utils"
@@ -39,20 +37,9 @@ func (t *OneTransactionTest) Run(cfg *config.Config) error {
 		return fmt.Errorf("invalid node index: %d", nodeIndex)
 	}
 
-	jwtSecret, err := transaction.ParseJWTSecretFromHexString(cfg.P2P.JWTSecret)
+	s, _, err := newSuiteForNode(cfg, nodeIndex)
 	if err != nil {
-		return fmt.Errorf("failed to parse JWT secret: %v", err)
-	}
-
-	enodeStr := cfg.P2P.BootstrapNodes[nodeIndex]
-	node, err := enode.Parse(enode.ValidSchemes, enodeStr)
-	if err != nil {
-		return fmt.Errorf("failed to parse enode: %v", err)
-	}
-
-	s, err := ethtest.NewSuite(node, node.IP().String()+":8551", common.Bytes2Hex(jwtSecret[:]), cfg.GetNodeName(nodeIndex))
-	if err != nil {
-		return fmt.Errorf("failed to create suite: %v", err)
+		return err
 	}
 
 	fmt.Printf("🎯 Starting single transaction testing for %s ...\n", s.GetElName())
@@ -183,8 +170,7 @@ func (t *LargeTransactionsTest) Run(cfg *config.Config) error {
 	}
 
 	// Prepare RPC client for chain queries (block numbers, headers, receipts)
-	nodeIP := client.GetNodeIP()
-	rpcURL := fmt.Sprintf("http://%s:8545", nodeIP)
+	rpcURL := client.GetRPCURL()
 	rpcClient, err := gethclient.Dial(rpcURL)
 	if err != nil {
 		return fmt.Errorf("failed to connect RPC at %s: %w", rpcURL, err)
@@ -199,20 +185,9 @@ func (t *LargeTransactionsTest) Run(cfg *config.Config) error {
 	}
 	fmt.Printf("📋 Nonce resolved: %s -> %d\n", nonceStr, nonce)
 
-	jwtSecret, err := transaction.ParseJWTSecretFromHexString(cfg.P2P.JWTSecret)
+	s, _, err := newSuiteForNode(cfg, nodeIndex)
 	if err != nil {
-		return fmt.Errorf("failed to parse JWT secret: %v", err)
-	}
-
-	enodeStr := cfg.P2P.BootstrapNodes[nodeIndex]
-	node, err := enode.Parse(enode.ValidSchemes, enodeStr)
-	if err != nil {
-		return fmt.Errorf("failed to parse enode: %v", err)
-	}
-
-	s, err := ethtest.NewSuite(node, node.IP().String()+":8551", common.Bytes2Hex(jwtSecret[:]), cfg.GetNodeName(nodeIndex))
-	if err != nil {
-		return fmt.Errorf("failed to create suite: %v", err)
+		return err
 	}
 
 	// Generate large batch of transactions

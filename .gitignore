@@ -9,7 +9,10 @@
 *.dylib
 d2pfuzz
 D2PFuzz
-manual
+/manual
+/fuzz
+.codex
+.omx/
 
 # Mac OS X
 .DS_Store

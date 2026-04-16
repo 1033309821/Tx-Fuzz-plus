@@ -229,13 +229,11 @@ This is a configuration file that contains RPC endpoint configurations used by m
 - Helper functions for endpoint management
 
 **Node Endpoints:**
-- Geth: http://172.16.0.11:8545
-- Nethermind: http://172.16.0.12:8545
-- Reth: http://172.16.0.13:8545
-- Erigon: http://172.16.0.14:8545
-- Besu: http://172.16.0.15:8545
+- Runtime endpoints should come from `~/ethpackage/endpoints.json`
+- Override path with `ECST_ENDPOINTS_FILE` when needed
+- Avoid treating the hardcoded shell examples in older scripts as the source of truth
 
-This file is sourced by other scripts to maintain consistent RPC endpoint configuration across the entire toolkit.
+This file is sourced by other scripts to maintain consistent RPC endpoint configuration across the toolkit, but the preferred runtime source of truth is now `endpoints.json`.
 
 ## Usage Notes
 
