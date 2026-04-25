@@ -71,16 +71,21 @@ type FuzzingConfig struct {
 
 // TxFuzzingConfig holds transaction fuzzing configuration
 type TxFuzzingConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	RPCEndpoint     string   `yaml:"rpc_endpoint"`
-	RPCEndpoints    []string `yaml:"rpc_endpoints"`
-	ChainID         int64    `yaml:"chain_id"`
-	MaxGasPrice     int64    `yaml:"max_gas_price"` // in wei
-	MaxGasLimit     uint64   `yaml:"max_gas_limit"`
-	TxPerSecond     int      `yaml:"tx_per_second"`
-	FuzzDurationSec int      `yaml:"fuzz_duration_sec"`
-	Seed            int64    `yaml:"seed"`
-	UseAccounts     bool     `yaml:"use_accounts"` // whether to use predefined accounts
+	Enabled                 bool     `yaml:"enabled"`
+	RPCEndpoint             string   `yaml:"rpc_endpoint"`
+	RPCEndpoints            []string `yaml:"rpc_endpoints"`
+	ChainID                 int64    `yaml:"chain_id"`
+	MaxGasPrice             int64    `yaml:"max_gas_price"` // in wei
+	MaxGasLimit             uint64   `yaml:"max_gas_limit"`
+	TxPerSecond             int      `yaml:"tx_per_second"`
+	FuzzDurationSec         int      `yaml:"fuzz_duration_sec"`
+	Seed                    int64    `yaml:"seed"`
+	UseAccounts             bool     `yaml:"use_accounts"` // whether to use predefined accounts
+	TxResultMappingEnabled  bool     `yaml:"tx_result_mapping_enabled"`
+	TxResultLogPath         string   `yaml:"tx_result_log_path"`
+	ReceiptDrainDurationSec int      `yaml:"receipt_drain_duration_sec"`
+	EnableTracking          bool     `yaml:"enable_tracking"`
+	ConfirmBlocks           uint64   `yaml:"confirm_blocks"`
 }
 
 // TxFuzzerConfig holds transaction fuzzer configuration

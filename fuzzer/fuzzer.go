@@ -103,8 +103,7 @@ func (f *FuzzClient) StopTxFuzzing() *TxRunSummary {
 		return nil
 	}
 
-	f.txFuzzer.Stop()
-	summary := f.txFuzzer.BuildRunSummary(time.Now())
+	summary := f.txFuzzer.Finalize(time.Now())
 	f.txFuzzer = nil
 	f.logger.Info("Transaction fuzzing stopped")
 	return &summary

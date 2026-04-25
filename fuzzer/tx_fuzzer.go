@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,14 +52,16 @@ type TransactionRecord struct {
 // TxFuzzer represents a transaction fuzzer with enhanced stress testing capabilities
 type TxFuzzer struct {
 	// Basic components
-	client   *ethclient.Client
-	accounts []config.Account
-	chainID  *big.Int
-	logger   utils.Logger
-	ctx      context.Context
-	cancel   context.CancelFunc
-	rng      *rand.Rand
-	nonces   *NonceManager
+	client     txRPCClient
+	accounts   []config.Account
+	chainID    *big.Int
+	logger     utils.Logger
+	ctx        context.Context
+	cancel     context.CancelFunc
+	sendCtx    context.Context
+	sendCancel context.CancelFunc
+	rng        *rand.Rand
+	nonces     *NonceManager
 
 	// Mutation components
 	mutationConfig *mutation.MutationConfig
@@ -67,6 +70,29 @@ type TxFuzzer struct {
 	rlpMutator     *strategies.RLPMutator
 
 	// Transaction tracking
+	runID                 string
+	attemptSeq            atomic.Uint64
+	txAttemptRecorder     *txAttemptRecorder
+	txAttemptLogPath      string
+	txAttemptProjection   *txAttemptProjection
+	txExpectationRecorder *txAttemptRecorder
+	txExpectationLogPath  string
+	txAnomalyRecorder     *txAttemptRecorder
+	txAnomalyLogPath      string
+	txAnomalySummaryPath  string
+	txAnomalyProjection   *txAnomalyProjection
+	attemptContexts       map[string]*txAttemptContext
+	attemptContextsMutex  sync.RWMutex
+	sendMu                sync.Mutex
+	sendWG                sync.WaitGroup
+	monitorMu             sync.Mutex
+	monitorWG             sync.WaitGroup
+	finalizing            atomic.Bool
+	confirmBlocks         uint64
+	receiptDrainDuration  time.Duration
+	receiptPollInterval   time.Duration
+	confirmPollInterval   time.Duration
+	preflightTimeout      time.Duration
 	txRecords             map[common.Hash]*TransactionRecord
 	recordsMutex          sync.RWMutex
 	stats                 *TxStats
@@ -78,11 +104,13 @@ type TxFuzzer struct {
 	hashMutex             sync.RWMutex // 保护哈希值列表的互斥锁
 
 	// Multi-node support
-	clients         map[string]*ethclient.Client // Multiple RPC clients
-	clientsMutex    sync.RWMutex
-	nodeHealth      map[string]bool // Node health status
-	healthMutex     sync.RWMutex
-	circuitBreakers map[string]*CircuitBreaker // Circuit breakers per endpoint
+	clients          map[string]txRPCClient // Multiple RPC clients
+	preflightClient  txPreflightClient
+	preflightClients map[string]txPreflightClient
+	clientsMutex     sync.RWMutex
+	nodeHealth       map[string]bool // Node health status
+	healthMutex      sync.RWMutex
+	circuitBreakers  map[string]*CircuitBreaker // Circuit breakers per endpoint
 
 	// Load pattern control
 	currentTPS int          // Current TPS for dynamic load patterns
@@ -255,11 +283,16 @@ type TxFuzzConfig struct {
 	LoadPattern     *LoadPattern     `json:"loadPattern,omitempty"` // Load pattern configuration
 	EnableMetrics   bool             `json:"enableMetrics"`         // Enable system metrics collection
 	MetricsInterval time.Duration    `json:"metricsInterval"`       // Metrics collection interval
+
+	// Per-attempt result mapping. Recording is disabled unless TxResultLogPath is set.
+	TxResultLogPath      string        `json:"txResultLogPath,omitempty"`
+	ReceiptDrainDuration time.Duration `json:"receiptDrainDuration,omitempty"`
 }
 
 // NewTxFuzzer creates a new transaction fuzzer with enhanced stress testing capabilities
 func NewTxFuzzer(cfg *TxFuzzConfig, accounts []config.Account, logger utils.Logger) (*TxFuzzer, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	sendCtx, sendCancel := context.WithCancel(context.Background())
 
 	// Initialize random number generator
 	seed := cfg.Seed
@@ -276,19 +309,57 @@ func NewTxFuzzer(cfg *TxFuzzConfig, accounts []config.Account, logger utils.Logg
 
 	// Create base fuzzer
 	tf := &TxFuzzer{
-		accounts:         accounts,
-		logger:           logger,
-		ctx:              ctx,
-		cancel:           cancel,
-		rng:              rng,
-		nonces:           NewNonceManager(),
-		txRecords:        make(map[common.Hash]*TransactionRecord),
-		stats:            stats,
-		errorClassCounts: make(map[SendErrorClass]int64),
-		clients:          make(map[string]*ethclient.Client),
-		nodeHealth:       make(map[string]bool),
-		currentTPS:       cfg.TxPerSecond,
-		systemMetrics:    &SystemMetrics{NetworkIO: make(map[string]int64), NodeLatency: make(map[string]time.Duration), ErrorRates: make(map[string]float64)},
+		runID:                fmt.Sprintf("txrun-%d", time.Now().UnixNano()),
+		accounts:             accounts,
+		logger:               logger,
+		ctx:                  ctx,
+		cancel:               cancel,
+		sendCtx:              sendCtx,
+		sendCancel:           sendCancel,
+		rng:                  rng,
+		nonces:               NewNonceManager(),
+		txRecords:            make(map[common.Hash]*TransactionRecord),
+		txAttemptProjection:  newTxAttemptProjection(),
+		txAnomalyProjection:  newTxAnomalyProjection(),
+		attemptContexts:      make(map[string]*txAttemptContext),
+		confirmBlocks:        cfg.ConfirmBlocks,
+		receiptDrainDuration: cfg.ReceiptDrainDuration,
+		preflightTimeout:     10 * time.Second,
+		stats:                stats,
+		errorClassCounts:     make(map[SendErrorClass]int64),
+		clients:              make(map[string]txRPCClient),
+		preflightClients:     make(map[string]txPreflightClient),
+		nodeHealth:           make(map[string]bool),
+		currentTPS:           cfg.TxPerSecond,
+		systemMetrics:        &SystemMetrics{NetworkIO: make(map[string]int64), NodeLatency: make(map[string]time.Duration), ErrorRates: make(map[string]float64)},
+	}
+	if tf.receiptDrainDuration == 0 {
+		tf.receiptDrainDuration = 5 * time.Second
+	}
+	if cfg.TxResultLogPath != "" {
+		recorder, err := newTxAttemptRecorder(cfg.TxResultLogPath)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		tf.txAttemptRecorder = recorder
+		tf.txAttemptLogPath = cfg.TxResultLogPath
+		tf.txExpectationLogPath = siblingTxArtifactPath(cfg.TxResultLogPath, "tx_expectations_", ".jsonl")
+		tf.txAnomalyLogPath = siblingTxArtifactPath(cfg.TxResultLogPath, "tx_anomalies_", ".jsonl")
+		tf.txAnomalySummaryPath = siblingTxArtifactPath(cfg.TxResultLogPath, "tx_anomaly_summary_", ".json")
+		tf.txExpectationRecorder, err = newTxExpectationRecorder(tf.txExpectationLogPath)
+		if err != nil {
+			_ = tf.txAttemptRecorder.Close()
+			cancel()
+			return nil, err
+		}
+		tf.txAnomalyRecorder, err = newTxAnomalyRecorder(tf.txAnomalyLogPath)
+		if err != nil {
+			_ = tf.txExpectationRecorder.Close()
+			_ = tf.txAttemptRecorder.Close()
+			cancel()
+			return nil, err
+		}
 	}
 
 	// Setup RPC connections (multi-node or single-node)
@@ -303,6 +374,7 @@ func NewTxFuzzer(cfg *TxFuzzConfig, accounts []config.Account, logger utils.Logg
 				continue
 			}
 			tf.clients[endpoint] = client
+			tf.preflightClients[endpoint] = client
 			tf.nodeHealth[endpoint] = true
 
 			// Create circuit breaker for each endpoint with proper defaults
@@ -337,7 +409,9 @@ func NewTxFuzzer(cfg *TxFuzzConfig, accounts []config.Account, logger utils.Logg
 			return nil, fmt.Errorf("failed to connect to Ethereum client: %v", err)
 		}
 		tf.client = client
+		tf.preflightClient = client
 		tf.clients[cfg.RPCEndpoint] = client
+		tf.preflightClients[cfg.RPCEndpoint] = client
 		tf.nodeHealth[cfg.RPCEndpoint] = true
 
 		// Initialize circuit breakers for single node
@@ -409,6 +483,11 @@ func (tf *TxFuzzer) Start(cfg *TxFuzzConfig) error {
 			tf.logger.Info("Transaction fuzzing completed, sent %d transactions", txCount)
 			return nil
 		case <-ticker.C:
+			if tf.finalizing.Load() {
+				tf.logger.Info("Transaction fuzzing finalizing, sent %d transactions", txCount)
+				return nil
+			}
+
 			// Update ticker if TPS changed
 			tf.tpsMutex.RLock()
 			newTPS := tf.currentTPS
@@ -420,8 +499,13 @@ func (tf *TxFuzzer) Start(cfg *TxFuzzConfig) error {
 				ticker = time.NewTicker(time.Second / time.Duration(currentTPS))
 			}
 
-			if err := tf.sendRandomTransaction(cfg); err != nil {
-				tf.recordErrorClass(ClassifySendError(err))
+			if !tf.beginSend() {
+				tf.logger.Info("Transaction fuzzing finalizing, sent %d transactions", txCount)
+				return nil
+			}
+			err := tf.sendRandomTransaction(cfg)
+			tf.endSend()
+			if err != nil {
 				tf.logger.Error("Failed to send transaction: %v", err)
 			} else {
 				txCount++
@@ -571,7 +655,7 @@ func (tf *TxFuzzer) startHealthMonitoring(interval time.Duration) {
 // checkNodeHealth checks the health of all RPC endpoints
 func (tf *TxFuzzer) checkNodeHealth() {
 	tf.clientsMutex.RLock()
-	clients := make(map[string]*ethclient.Client)
+	clients := make(map[string]txRPCClient)
 	for endpoint, client := range tf.clients {
 		clients[endpoint] = client
 	}
@@ -618,8 +702,7 @@ func (tf *TxFuzzer) startMetricsCollection(interval time.Duration) {
 
 // StartWithContext starts the fuzzing process with context support
 func (tf *TxFuzzer) StartWithContext(ctx context.Context, cfg *TxFuzzConfig) error {
-	// Store context for use in other methods
-	tf.ctx = ctx
+	tf.setExecutionContext(ctx)
 
 	// Initialize current TPS from config
 	tf.tpsMutex.Lock()
@@ -779,10 +862,10 @@ func (tf *TxFuzzer) collectSystemMetrics() {
 }
 
 // sendTransactionWithRetry sends a transaction with retry and circuit breaker protection
-func (tf *TxFuzzer) sendTransactionWithRetry(endpoint string, tx *types.Transaction, cfg *TxFuzzConfig) error {
+func (tf *TxFuzzer) sendTransactionWithRetry(endpoint string, tx *types.Transaction, cfg *TxFuzzConfig) (int, error) {
 	client := tf.getHealthyClient(endpoint)
 	if client == nil {
-		return fmt.Errorf("no healthy client available for endpoint: %s", endpoint)
+		return 0, fmt.Errorf("no healthy client available for endpoint: %s", endpoint)
 	}
 
 	// Get circuit breaker for this endpoint
@@ -791,7 +874,7 @@ func (tf *TxFuzzer) sendTransactionWithRetry(endpoint string, tx *types.Transact
 	tf.clientsMutex.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("no circuit breaker found for endpoint: %s", endpoint)
+		return 0, fmt.Errorf("no circuit breaker found for endpoint: %s", endpoint)
 	}
 
 	// Configure retry settings using config values
@@ -817,20 +900,26 @@ func (tf *TxFuzzer) sendTransactionWithRetry(endpoint string, tx *types.Transact
 	// Execute with circuit breaker and retry. Only network/RPC errors affect
 	// the endpoint breaker; business errors such as nonce/replacement issues
 	// are returned immediately for caller-level handling.
-	return cb.Call(func() error {
+	actualRetries := 0
+	err := cb.Call(func() error {
 		var lastErr error
 		delay := retryConfig.InitialDelay
 
 		for attempt := 0; attempt <= retryConfig.MaxRetries; attempt++ {
 			if attempt > 0 {
-				time.Sleep(delay)
+				actualRetries++
+				select {
+				case <-tf.activeSendContext().Done():
+					return tf.activeSendContext().Err()
+				case <-time.After(delay):
+				}
 				delay = time.Duration(float64(delay) * retryConfig.BackoffFactor)
 				if delay > retryConfig.MaxDelay {
 					delay = retryConfig.MaxDelay
 				}
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(tf.activeSendContext(), 10*time.Second)
 			err := client.SendTransaction(ctx, tx)
 			cancel()
 
@@ -846,10 +935,11 @@ func (tf *TxFuzzer) sendTransactionWithRetry(endpoint string, tx *types.Transact
 
 		return fmt.Errorf("max retries exceeded: %w", lastErr)
 	})
+	return actualRetries, err
 }
 
 // getHealthyClient returns a healthy client for the given endpoint
-func (tf *TxFuzzer) getHealthyClient(endpoint string) *ethclient.Client {
+func (tf *TxFuzzer) getHealthyClient(endpoint string) txRPCClient {
 	tf.clientsMutex.RLock()
 	defer tf.clientsMutex.RUnlock()
 
@@ -889,7 +979,7 @@ func (tf *TxFuzzer) selectHealthyEndpoint() string {
 // checkAllEndpointsHealth checks health of all configured endpoints
 func (tf *TxFuzzer) checkAllEndpointsHealth() {
 	tf.clientsMutex.RLock()
-	clients := make(map[string]*ethclient.Client)
+	clients := make(map[string]txRPCClient)
 	for k, v := range tf.clients {
 		clients[k] = v
 	}
@@ -915,7 +1005,7 @@ func (tf *TxFuzzer) checkAllEndpointsHealth() {
 }
 
 // checkEndpointHealth checks if an endpoint is healthy
-func (tf *TxFuzzer) checkEndpointHealth(client *ethclient.Client) bool {
+func (tf *TxFuzzer) checkEndpointHealth(client txRPCClient) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -926,41 +1016,58 @@ func (tf *TxFuzzer) checkEndpointHealth(client *ethclient.Client) bool {
 
 // sendRandomTransaction generates and sends a random transaction with enhanced error handling
 func (tf *TxFuzzer) sendRandomTransaction(cfg *TxFuzzConfig) error {
+	attempt := tf.beginTxAttempt("")
+
 	// Select a healthy endpoint
 	endpoint := tf.selectHealthyEndpoint()
+	attempt.Endpoint = endpoint
 	if endpoint == "" {
-		return fmt.Errorf("no healthy endpoints available")
+		err := fmt.Errorf("no healthy endpoints available")
+		tf.finishTxAttemptRejected(attempt, txStageEndpointSelection, err, 0, 0)
+		return err
 	}
 
 	// Get a random account
 	account := tf.accounts[tf.rng.Intn(len(tf.accounts))]
 	privateKey, err := crypto.HexToECDSA(account.PrivateKey)
 	if err != nil {
-		return fmt.Errorf("failed to parse private key: %w", err)
+		err = fmt.Errorf("failed to parse private key: %w", err)
+		tf.finishTxAttemptRejected(attempt, txStageAccountDecode, err, 0, 0)
+		return err
 	}
+	address := crypto.PubkeyToAddress(privateKey.PublicKey)
+	attempt.Account = address
 
 	// Get client for the selected endpoint
 	client := tf.getHealthyClient(endpoint)
 	if client == nil {
-		return fmt.Errorf("no healthy client available for endpoint: %s", endpoint)
+		err := fmt.Errorf("no healthy client available for endpoint: %s", endpoint)
+		tf.finishTxAttemptRejected(attempt, txStageEndpointSelection, err, 0, 0)
+		return err
 	}
 
 	// Get nonce with retry
-	address := crypto.PubkeyToAddress(privateKey.PublicKey)
-	nonce, err := tf.nonces.Next(tf.ctx, client, address)
+	nonce, err := tf.nonces.Next(tf.activeSendContext(), client, address)
 	if err != nil {
-		return fmt.Errorf("failed to get nonce: %w", err)
+		err = fmt.Errorf("failed to get nonce: %w", err)
+		tf.finishTxAttemptRejected(attempt, txStageNonceFetch, err, 0, 0)
+		return err
 	}
+	attempt.Nonce = &nonce
 
 	// Generate transaction
 	tx, mutationUsed, mutationType, err := tf.generateTransaction(privateKey, nonce, cfg)
 	if err != nil {
-		return fmt.Errorf("failed to generate transaction: %w", err)
+		err = fmt.Errorf("failed to generate transaction: %w", err)
+		tf.finishTxAttemptRejected(attempt, txStageTxGeneration, err, 0, 0)
+		return err
 	}
+	attempt.AttachTransaction(tx, mutationUsed, mutationType)
+	tf.captureExpectationEvidence(attempt)
 
 	// Send transaction with retry and circuit breaker
 	startTime := time.Now()
-	err = tf.sendTransactionWithRetry(endpoint, tx, cfg)
+	retryCount, err := tf.sendTransactionWithRetry(endpoint, tx, cfg)
 	latency := time.Since(startTime)
 
 	// Update metrics
@@ -970,7 +1077,7 @@ func (tf *TxFuzzer) sendRandomTransaction(cfg *TxFuzzConfig) error {
 		class := ClassifySendError(err)
 		action := class.Action()
 		if class == SendErrorNonce {
-			if refreshed, refreshErr := tf.nonces.Refresh(tf.ctx, client, address); refreshErr != nil {
+			if refreshed, refreshErr := tf.nonces.Refresh(tf.activeSendContext(), client, address); refreshErr != nil {
 				tf.logger.Warn("error_class=%s action=%s refresh_error=%v address=%s", class, action, refreshErr, address.Hex())
 			} else {
 				tf.logger.Warn("error_class=%s action=%s next_nonce=%d address=%s", class, action, refreshed, address.Hex())
@@ -978,6 +1085,7 @@ func (tf *TxFuzzer) sendRandomTransaction(cfg *TxFuzzConfig) error {
 		} else {
 			tf.logger.Warn("error_class=%s action=%s endpoint=%s", class, action, endpoint)
 		}
+		tf.finishTxAttemptRejected(attempt, txStageSend, err, latency, retryCount)
 		tf.updateStats("failed", mutationUsed)
 		tf.logger.Debug("Failed to send transaction: %v", err)
 		return err
@@ -985,11 +1093,12 @@ func (tf *TxFuzzer) sendRandomTransaction(cfg *TxFuzzConfig) error {
 
 	// Record successful transaction
 	tf.recordTransaction(tx, mutationUsed, mutationType)
+	tf.finishTxAttemptAccepted(attempt, latency, retryCount)
 	tf.updateStats("sent", mutationUsed)
 
 	// Start monitoring if tracking is enabled
 	if cfg.EnableTracking {
-		go tf.monitorTransaction(tx.Hash(), cfg.ConfirmBlocks)
+		tf.startReceiptMonitor(attempt.AttemptID, tx.Hash(), endpoint, cfg.ConfirmBlocks)
 	}
 
 	tf.logger.Debug("Transaction sent: %s (endpoint: %s, latency: %v)",
@@ -1039,7 +1148,7 @@ func (tf *TxFuzzer) getFromAddress(tx *types.Transaction) common.Address {
 }
 
 // selectHealthyClient selects a healthy client using round-robin load balancing
-func (tf *TxFuzzer) selectHealthyClient() (*ethclient.Client, string, error) {
+func (tf *TxFuzzer) selectHealthyClient() (txRPCClient, string, error) {
 	tf.clientsMutex.RLock()
 	tf.healthMutex.RLock()
 	defer tf.clientsMutex.RUnlock()
@@ -1071,7 +1180,7 @@ func (tf *TxFuzzer) selectHealthyClient() (*ethclient.Client, string, error) {
 }
 
 // getNonceWithRetry gets nonce with retry mechanism
-func (tf *TxFuzzer) getNonceWithRetry(client *ethclient.Client, address common.Address, maxRetries int) (uint64, error) {
+func (tf *TxFuzzer) getNonceWithRetry(client txRPCClient, address common.Address, maxRetries int) (uint64, error) {
 	var nonce uint64
 	var err error
 
@@ -1330,7 +1439,21 @@ func (tf *TxFuzzer) updateStats(status string, mutationUsed bool) {
 
 // monitorTransaction monitors a transaction until it's mined or fails
 func (tf *TxFuzzer) monitorTransaction(txHash common.Hash, confirmBlocks uint64) {
-	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
+	attemptID := tf.findAttemptIDByHash(txHash)
+	tf.monitorTransactionForAttempt(attemptID, txHash, "", confirmBlocks)
+}
+
+func (tf *TxFuzzer) monitorTransactionForAttempt(attemptID string, txHash common.Hash, lookupEndpoint string, confirmBlocks uint64) {
+	client := tf.getHealthyClient(lookupEndpoint)
+	if client == nil {
+		client = tf.client
+		lookupEndpoint = ""
+	}
+	checkInterval := tf.receiptPollInterval
+	if checkInterval == 0 {
+		checkInterval = 5 * time.Second
+	}
+	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
 	timeout := time.After(10 * time.Minute) // Timeout after 10 minutes
@@ -1340,6 +1463,7 @@ func (tf *TxFuzzer) monitorTransaction(txHash common.Hash, confirmBlocks uint64)
 		case <-tf.ctx.Done():
 			return
 		case <-timeout:
+			tf.recordTimeoutObservation(attemptID, lookupEndpoint, txHash)
 			// Mark as failed due to timeout
 			tf.recordsMutex.Lock()
 			if record, exists := tf.txRecords[txHash]; exists {
@@ -1351,10 +1475,18 @@ func (tf *TxFuzzer) monitorTransaction(txHash common.Hash, confirmBlocks uint64)
 			return
 		case <-ticker.C:
 			// Check transaction receipt
-			receipt, err := tf.client.TransactionReceipt(tf.ctx, txHash)
+			receipt, err := client.TransactionReceipt(tf.ctx, txHash)
 			if err != nil {
 				continue // Transaction not mined yet
 			}
+
+			receiptStatus := txReceiptMined
+			terminal := confirmBlocks == 0
+			if receipt.Status == types.ReceiptStatusFailed {
+				receiptStatus = txReceiptReverted
+				terminal = true
+			}
+			tf.recordReceiptObservation(attemptID, lookupEndpoint, receipt, receiptStatus, terminal)
 
 			// Transaction mined, update record
 			tf.recordsMutex.Lock()
@@ -1378,7 +1510,7 @@ func (tf *TxFuzzer) monitorTransaction(txHash common.Hash, confirmBlocks uint64)
 
 			// Wait for confirmation blocks if needed
 			if confirmBlocks > 0 {
-				go tf.waitForConfirmation(txHash, receipt.BlockNumber.Uint64(), confirmBlocks)
+				tf.waitForConfirmation(attemptID, txHash, lookupEndpoint, receipt.BlockNumber.Uint64(), confirmBlocks)
 			}
 			return
 		}
@@ -1386,8 +1518,17 @@ func (tf *TxFuzzer) monitorTransaction(txHash common.Hash, confirmBlocks uint64)
 }
 
 // waitForConfirmation waits for the specified number of confirmation blocks
-func (tf *TxFuzzer) waitForConfirmation(txHash common.Hash, minedBlock uint64, confirmBlocks uint64) {
-	ticker := time.NewTicker(15 * time.Second) // Check every 15 seconds
+func (tf *TxFuzzer) waitForConfirmation(attemptID string, txHash common.Hash, lookupEndpoint string, minedBlock uint64, confirmBlocks uint64) {
+	client := tf.getHealthyClient(lookupEndpoint)
+	if client == nil {
+		client = tf.client
+		lookupEndpoint = ""
+	}
+	checkInterval := tf.confirmPollInterval
+	if checkInterval == 0 {
+		checkInterval = 15 * time.Second
+	}
+	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
 
 	for {
@@ -1395,12 +1536,13 @@ func (tf *TxFuzzer) waitForConfirmation(txHash common.Hash, minedBlock uint64, c
 		case <-tf.ctx.Done():
 			return
 		case <-ticker.C:
-			currentBlock, err := tf.client.BlockNumber(tf.ctx)
+			currentBlock, err := client.BlockNumber(tf.ctx)
 			if err != nil {
 				continue
 			}
 
 			if currentBlock >= minedBlock+confirmBlocks {
+				tf.recordConfirmationObservation(attemptID, lookupEndpoint, currentBlock, true)
 				// Transaction confirmed
 				tf.recordsMutex.Lock()
 				if record, exists := tf.txRecords[txHash]; exists {
@@ -1527,4 +1669,386 @@ func (tf *TxFuzzer) Close() error {
 		tf.client.Close()
 	}
 	return nil
+}
+
+func (tf *TxFuzzer) beginTxAttempt(endpoint string) *txAttemptContext {
+	if tf.runID == "" {
+		tf.runID = fmt.Sprintf("txrun-%d", time.Now().UnixNano())
+	}
+	seq := tf.attemptSeq.Add(1)
+	attempt := &txAttemptContext{
+		RunID:     tf.runID,
+		AttemptID: fmt.Sprintf("%s-%06d", tf.runID, seq),
+		Endpoint:  endpoint,
+		StartedAt: time.Now(),
+	}
+	tf.attemptContextsMutex.Lock()
+	if tf.attemptContexts == nil {
+		tf.attemptContexts = make(map[string]*txAttemptContext)
+	}
+	tf.attemptContexts[attempt.AttemptID] = attempt
+	tf.attemptContextsMutex.Unlock()
+	return attempt
+}
+
+func (tf *TxFuzzer) finishTxAttemptAccepted(attempt *txAttemptContext, latency time.Duration, retryCount int) {
+	if attempt == nil {
+		return
+	}
+	event := tf.sendAttemptEvent(attempt, txStageSend, txSendAccepted, nil, latency, retryCount)
+	if attempt.TxHashSet {
+		event.ReturnedHash = attempt.TxHash.Hex()
+	}
+	tf.recordSendAttemptEvent(event)
+}
+
+func (tf *TxFuzzer) finishTxAttemptRejected(attempt *txAttemptContext, stage txStage, err error, latency time.Duration, retryCount int) {
+	if attempt == nil {
+		return
+	}
+	status := txSendRejected
+	if stage != txStageSend {
+		status = txSendPreSendError
+	}
+	event := tf.sendAttemptEvent(attempt, stage, status, err, latency, retryCount)
+	tf.recordSendAttemptEvent(event)
+}
+
+func (tf *TxFuzzer) sendAttemptEvent(attempt *txAttemptContext, stage txStage, status txSendStatus, sendErr error, latency time.Duration, retryCount int) txAttemptEvent {
+	event := txAttemptEvent{
+		SchemaVersion: txAttemptSchemaVersion,
+		Event:         txEventSendAttempt,
+		RunID:         attempt.RunID,
+		AttemptID:     attempt.AttemptID,
+		Timestamp:     time.Now(),
+		Stage:         stage,
+		SendStatus:    status,
+		Endpoint:      attempt.Endpoint,
+		RetryCount:    retryCount,
+	}
+	if attempt.Account != (common.Address{}) {
+		event.Account = attempt.Account.Hex()
+	}
+	if tf.chainID != nil {
+		event.ChainID = tf.chainID.String()
+	}
+	if attempt.Nonce != nil {
+		nonce := *attempt.Nonce
+		event.Nonce = &nonce
+	}
+	if attempt.TxHashSet {
+		event.TxHash = attempt.TxHash.Hex()
+	}
+	if attempt.Tx != nil {
+		tx := attempt.Tx
+		txType := tx.Type()
+		event.TxType = &txType
+		if tx.To() != nil {
+			event.To = tx.To().Hex()
+		}
+		event.Value = stringBig(tx.Value())
+		gas := tx.Gas()
+		event.Gas = &gas
+		event.GasPrice = stringBig(tx.GasPrice())
+		event.GasFeeCap = stringBig(tx.GasFeeCap())
+		event.GasTipCap = stringBig(tx.GasTipCap())
+		payloadLen := len(tx.Data())
+		event.PayloadLength = &payloadLen
+		event.PayloadHash = payloadHash(tx.Data())
+	}
+	mutationUsed := attempt.MutationUsed
+	event.MutationUsed = &mutationUsed
+	event.MutationType = attempt.MutationType
+	if latency > 0 {
+		latencyMS := latency.Milliseconds()
+		event.LatencyMS = &latencyMS
+	}
+	if sendErr != nil {
+		class := ClassifySendError(sendErr)
+		event.ErrorClass = string(class)
+		event.ErrorAction = class.Action()
+		event.ErrorMessage = sendErr.Error()
+	}
+	return event
+}
+
+func (tf *TxFuzzer) recordSendAttemptEvent(event txAttemptEvent) bool {
+	if tf.txAttemptProjection == nil {
+		return false
+	}
+	if tf.txAnomalyProjection != nil {
+		tf.txAnomalyProjection.RecordSendAttempt(event)
+	}
+	stored := tf.txAttemptProjection.RecordSendAttemptWithAppend(event, func() error {
+		if tf.txAttemptRecorder == nil {
+			return nil
+		}
+		return tf.txAttemptRecorder.Append(event)
+	})
+	if !stored && tf.logger.Logger != nil {
+		tf.logger.Warn("failed to append tx attempt event")
+	}
+	return stored
+}
+
+func (tf *TxFuzzer) recordReceiptObservation(attemptID string, lookupEndpoint string, receipt *types.Receipt, status txReceiptStatus, terminal bool) bool {
+	attempt := tf.getAttemptContext(attemptID)
+	if attempt == nil {
+		return false
+	}
+	event := txReceiptObservationEvent{
+		SchemaVersion:  txAttemptSchemaVersion,
+		Event:          txEventReceiptObservation,
+		RunID:          attempt.RunID,
+		AttemptID:      attempt.AttemptID,
+		Timestamp:      time.Now(),
+		SendEndpoint:   attempt.Endpoint,
+		LookupEndpoint: lookupEndpoint,
+		ReceiptStatus:  status,
+		Terminal:       terminal || isTerminalReceiptStatus(status, tf.confirmBlocks),
+	}
+	if attempt.TxHashSet {
+		event.TxHash = attempt.TxHash.Hex()
+	}
+	if receipt != nil {
+		if receipt.BlockNumber != nil {
+			blockNumber := receipt.BlockNumber.Uint64()
+			event.BlockNumber = &blockNumber
+		}
+		if receipt.BlockHash != (common.Hash{}) {
+			event.BlockHash = receipt.BlockHash.Hex()
+		}
+		txIndex := receipt.TransactionIndex
+		event.TransactionIndex = &txIndex
+		gasUsed := receipt.GasUsed
+		event.GasUsed = &gasUsed
+		event.EffectiveGasPrice = stringBig(receipt.EffectiveGasPrice)
+		if receipt.ContractAddress != (common.Address{}) {
+			event.ContractAddress = receipt.ContractAddress.Hex()
+		}
+		logsCount := len(receipt.Logs)
+		event.LogsCount = &logsCount
+	}
+	return tf.recordReceiptObservationEvent(event)
+}
+
+func (tf *TxFuzzer) recordConfirmationObservation(attemptID string, lookupEndpoint string, currentBlock uint64, terminal bool) bool {
+	attempt := tf.getAttemptContext(attemptID)
+	if attempt == nil {
+		return false
+	}
+	event := txReceiptObservationEvent{
+		SchemaVersion:  txAttemptSchemaVersion,
+		Event:          txEventReceiptObservation,
+		RunID:          attempt.RunID,
+		AttemptID:      attempt.AttemptID,
+		Timestamp:      time.Now(),
+		SendEndpoint:   attempt.Endpoint,
+		LookupEndpoint: lookupEndpoint,
+		ReceiptStatus:  txReceiptConfirmed,
+		BlockNumber:    &currentBlock,
+		Terminal:       terminal,
+	}
+	if attempt.TxHashSet {
+		event.TxHash = attempt.TxHash.Hex()
+	}
+	return tf.recordReceiptObservationEvent(event)
+}
+
+func (tf *TxFuzzer) recordTimeoutObservation(attemptID string, lookupEndpoint string, txHash common.Hash) bool {
+	attempt := tf.getAttemptContext(attemptID)
+	if attempt == nil {
+		return false
+	}
+	event := txReceiptObservationEvent{
+		SchemaVersion:  txAttemptSchemaVersion,
+		Event:          txEventReceiptObservation,
+		RunID:          attempt.RunID,
+		AttemptID:      attempt.AttemptID,
+		Timestamp:      time.Now(),
+		TxHash:         txHash.Hex(),
+		SendEndpoint:   attempt.Endpoint,
+		LookupEndpoint: lookupEndpoint,
+		ReceiptStatus:  txReceiptTimeout,
+		Terminal:       true,
+	}
+	return tf.recordReceiptObservationEvent(event)
+}
+
+func (tf *TxFuzzer) recordReceiptObservationEvent(event txReceiptObservationEvent) bool {
+	if tf.txAttemptProjection == nil {
+		return false
+	}
+	if tf.txAnomalyProjection != nil {
+		tf.txAnomalyProjection.RecordReceiptObservation(event, tf.confirmBlocks)
+	}
+	return tf.txAttemptProjection.RecordReceiptObservationWithAppend(event, tf.confirmBlocks, func() error {
+		if tf.txAttemptRecorder == nil {
+			return nil
+		}
+		return tf.txAttemptRecorder.Append(event)
+	})
+}
+
+func (tf *TxFuzzer) getAttemptContext(attemptID string) *txAttemptContext {
+	if attemptID == "" {
+		return nil
+	}
+	tf.attemptContextsMutex.RLock()
+	defer tf.attemptContextsMutex.RUnlock()
+	return tf.attemptContexts[attemptID]
+}
+
+func (tf *TxFuzzer) findAttemptIDByHash(txHash common.Hash) string {
+	tf.attemptContextsMutex.RLock()
+	defer tf.attemptContextsMutex.RUnlock()
+	for id, attempt := range tf.attemptContexts {
+		if attempt.TxHashSet && attempt.TxHash == txHash {
+			return id
+		}
+	}
+	return ""
+}
+
+func (tf *TxFuzzer) startReceiptMonitor(attemptID string, txHash common.Hash, lookupEndpoint string, confirmBlocks uint64) bool {
+	tf.monitorMu.Lock()
+	defer tf.monitorMu.Unlock()
+	if tf.finalizing.Load() {
+		return false
+	}
+	tf.monitorWG.Add(1)
+	go func() {
+		defer tf.monitorWG.Done()
+		tf.monitorTransactionForAttempt(attemptID, txHash, lookupEndpoint, confirmBlocks)
+	}()
+	return true
+}
+
+func (tf *TxFuzzer) Finalize(finishedAt time.Time) TxRunSummary {
+	tf.sendMu.Lock()
+	tf.monitorMu.Lock()
+	tf.finalizing.Store(true)
+	tf.monitorMu.Unlock()
+	tf.sendMu.Unlock()
+	if tf.sendCancel != nil {
+		tf.sendCancel()
+	}
+	tf.waitForSendDrain()
+
+	done := make(chan struct{})
+	go func() {
+		tf.monitorWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(tf.receiptDrainDuration):
+	}
+	if tf.txAttemptProjection != nil {
+		for _, attemptID := range tf.txAttemptProjection.PendingAcceptedAttemptIDs() {
+			attempt := tf.getAttemptContext(attemptID)
+			if attempt == nil {
+				continue
+			}
+			event := txReceiptObservationEvent{
+				SchemaVersion:  txAttemptSchemaVersion,
+				Event:          txEventReceiptObservation,
+				RunID:          attempt.RunID,
+				AttemptID:      attempt.AttemptID,
+				Timestamp:      time.Now(),
+				SendEndpoint:   attempt.Endpoint,
+				LookupEndpoint: attempt.Endpoint,
+				ReceiptStatus:  txReceiptPendingAtShutdown,
+				Terminal:       true,
+			}
+			if attempt.TxHashSet {
+				event.TxHash = attempt.TxHash.Hex()
+			}
+			tf.recordReceiptObservationEvent(event)
+		}
+	}
+	if tf.txAnomalyProjection != nil {
+		anomalies, summary := tf.txAnomalyProjection.BuildReport()
+		if tf.txAnomalyRecorder != nil {
+			for _, event := range anomalies {
+				_ = tf.txAnomalyRecorder.Append(event)
+			}
+		}
+		if tf.txAnomalySummaryPath != "" {
+			_ = WriteTxAnomalySummaryJSON(tf.txAnomalySummaryPath, summary)
+		}
+	}
+	if tf.txExpectationRecorder != nil {
+		_ = tf.txExpectationRecorder.Close()
+	}
+	if tf.txAnomalyRecorder != nil {
+		_ = tf.txAnomalyRecorder.Close()
+	}
+	if tf.txAttemptRecorder != nil {
+		_ = tf.txAttemptRecorder.Close()
+	}
+	tf.Stop()
+	return tf.BuildRunSummary(finishedAt)
+}
+
+func defaultTxResultLogPath(outputDir string, enabled bool) string {
+	if !enabled {
+		return ""
+	}
+	if outputDir == "" {
+		outputDir = "output"
+	}
+	return filepath.Join(outputDir, fmt.Sprintf("tx_attempts_%s.jsonl", time.Now().Format("20060102_150405")))
+}
+
+func (tf *TxFuzzer) activeSendContext() context.Context {
+	if tf != nil && tf.sendCtx != nil {
+		return tf.sendCtx
+	}
+	if tf != nil && tf.ctx != nil {
+		return tf.ctx
+	}
+	return context.Background()
+}
+
+func (tf *TxFuzzer) setExecutionContext(ctx context.Context) {
+	if tf == nil {
+		return
+	}
+	tf.ctx = ctx
+	if tf.sendCancel != nil {
+		tf.sendCancel()
+	}
+	if ctx == nil {
+		tf.sendCtx = nil
+		tf.sendCancel = nil
+		return
+	}
+	tf.sendCtx, tf.sendCancel = context.WithCancel(ctx)
+}
+
+func (tf *TxFuzzer) waitForSendDrain() {
+	done := make(chan struct{})
+	go func() {
+		tf.sendWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(tf.receiptDrainDuration):
+	}
+}
+
+func (tf *TxFuzzer) beginSend() bool {
+	tf.sendMu.Lock()
+	defer tf.sendMu.Unlock()
+	if tf.finalizing.Load() {
+		return false
+	}
+	tf.sendWG.Add(1)
+	return true
+}
+
+func (tf *TxFuzzer) endSend() {
+	tf.sendWG.Done()
 }

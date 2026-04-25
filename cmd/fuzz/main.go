@@ -68,6 +68,9 @@ func main() {
 			} else {
 				txCfg := cfg.GetTxFuzzingConfig()
 				fuzzConfig := buildTxFuzzConfig(txCfg)
+				if txCfg.TxResultMappingEnabled && fuzzConfig.TxResultLogPath == "" {
+					fuzzConfig.TxResultLogPath = fuzzer.DefaultTxResultLogPath(cfg.GetOutputPath(), true)
+				}
 
 				err = fuzzClient.StartTxFuzzing(fuzzConfig, accounts)
 				if err != nil {
@@ -137,15 +140,18 @@ func buildTxFuzzConfig(txCfg config.TxFuzzingConfig) *fuzzer.TxFuzzConfig {
 	}
 
 	fuzzConfig := &fuzzer.TxFuzzConfig{
-		RPCEndpoint:  rpcEndpoint,
-		ChainID:      txCfg.ChainID,
-		MaxGasPrice:  big.NewInt(txCfg.MaxGasPrice),
-		MaxGasLimit:  txCfg.MaxGasLimit,
-		TxPerSecond:  txCfg.TxPerSecond,
-		FuzzDuration: time.Duration(txCfg.FuzzDurationSec) * time.Second,
-		Seed:         txCfg.Seed,
+		RPCEndpoint:          rpcEndpoint,
+		ChainID:              txCfg.ChainID,
+		MaxGasPrice:          big.NewInt(txCfg.MaxGasPrice),
+		MaxGasLimit:          txCfg.MaxGasLimit,
+		TxPerSecond:          txCfg.TxPerSecond,
+		FuzzDuration:         time.Duration(txCfg.FuzzDurationSec) * time.Second,
+		Seed:                 txCfg.Seed,
+		TxResultLogPath:      txCfg.TxResultLogPath,
+		ReceiptDrainDuration: time.Duration(txCfg.ReceiptDrainDurationSec) * time.Second,
+		EnableTracking:       txCfg.EnableTracking || txCfg.TxResultMappingEnabled,
+		ConfirmBlocks:        txCfg.ConfirmBlocks,
 	}
-
 	if len(rpcEndpoints) > 1 {
 		fuzzConfig.MultiNode = buildMultiNodeConfig(rpcEndpoints)
 	}

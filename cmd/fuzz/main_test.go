@@ -48,3 +48,21 @@ func TestBuildTxFuzzConfigFallsBackToSingleEndpoint(t *testing.T) {
 	assert.Equal(t, "http://single:8545", got.RPCEndpoint)
 	assert.Nil(t, got.MultiNode)
 }
+
+func TestBuildTxFuzzConfigMapsTxResultRecordingOptions(t *testing.T) {
+	txCfg := config.TxFuzzingConfig{
+		RPCEndpoint:             "http://single:8545",
+		FuzzDurationSec:         60,
+		TxResultMappingEnabled:  true,
+		TxResultLogPath:         "output/custom-attempts.jsonl",
+		ReceiptDrainDurationSec: 7,
+		ConfirmBlocks:           2,
+	}
+
+	got := buildTxFuzzConfig(txCfg)
+
+	assert.Equal(t, "output/custom-attempts.jsonl", got.TxResultLogPath)
+	assert.Equal(t, 7*time.Second, got.ReceiptDrainDuration)
+	assert.True(t, got.EnableTracking)
+	assert.Equal(t, uint64(2), got.ConfirmBlocks)
+}
