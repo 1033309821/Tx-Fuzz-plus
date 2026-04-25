@@ -68,7 +68,7 @@ func main() {
 			} else {
 				txCfg := cfg.GetTxFuzzingConfig()
 				fuzzConfig := buildTxFuzzConfig(txCfg)
-				if txCfg.TxResultMappingEnabled && fuzzConfig.TxResultLogPath == "" {
+				if (txCfg.TxResultMappingEnabled || txCfg.Replay.Enabled) && fuzzConfig.TxResultLogPath == "" {
 					fuzzConfig.TxResultLogPath = fuzzer.DefaultTxResultLogPath(cfg.GetOutputPath(), true)
 				}
 
@@ -153,13 +153,23 @@ func buildTxFuzzConfig(txCfg config.TxFuzzingConfig) *fuzzer.TxFuzzConfig {
 		ConfirmBlocks:        txCfg.ConfirmBlocks,
 	}
 	if len(rpcEndpoints) > 1 {
-		fuzzConfig.MultiNode = buildMultiNodeConfig(rpcEndpoints)
+		fuzzConfig.MultiNode = buildMultiNodeConfig(rpcEndpoints, txCfg.EndpointLabels)
+	}
+	if txCfg.Replay.Enabled {
+		fuzzConfig.Replay = &fuzzer.TxReplayConfig{
+			Enabled:           txCfg.Replay.Enabled,
+			GroupCount:        txCfg.Replay.GroupCount,
+			EndpointsPerGroup: txCfg.Replay.EndpointsPerGroup,
+			TxType:            txCfg.Replay.TxType,
+			PayloadSize:       txCfg.Replay.PayloadSize,
+		}
+		fuzzConfig.EnableTracking = true
 	}
 
 	return fuzzConfig
 }
 
-func buildMultiNodeConfig(rpcEndpoints []string) *fuzzer.MultiNodeConfig {
+func buildMultiNodeConfig(rpcEndpoints []string, endpointLabels map[string]string) *fuzzer.MultiNodeConfig {
 	loadDistribution := make(map[string]float64, len(rpcEndpoints))
 	weight := 1.0 / float64(len(rpcEndpoints))
 	for _, endpoint := range rpcEndpoints {
@@ -173,7 +183,19 @@ func buildMultiNodeConfig(rpcEndpoints []string) *fuzzer.MultiNodeConfig {
 		HealthCheckInterval: 30 * time.Second,
 		MaxRetries:          3,
 		RetryDelay:          time.Second,
+		EndpointLabels:      cloneStringMap(endpointLabels),
 	}
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func txFuzzSummaryPath(outputPath string, finishedAt time.Time) string {

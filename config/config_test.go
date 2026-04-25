@@ -127,7 +127,10 @@ accounts:
 	assert.Equal(t, int64(3151908), cfg.ChainID.Int64())
 	assert.Equal(t, "3000000000", cfg.DefaultGasTipCap.String())
 	assert.Equal(t, "30000000000", cfg.DefaultGasFeeCap.String())
-	assert.Equal(t, cfg.TxFuzzing, cfg.GetTxFuzzingConfig())
+	txCfg := cfg.GetTxFuzzingConfig()
+	assert.Equal(t, cfg.TxFuzzing.RPCEndpoints, txCfg.RPCEndpoints)
+	assert.Equal(t, "geth", txCfg.EndpointLabels[cfg.TxFuzzing.RPCEndpoints[0]])
+	assert.Equal(t, "geth", txCfg.EndpointLabels[cfg.GetRPCURL(0)])
 }
 
 func TestLoadConfigRejectsInvalidGasCaps(t *testing.T) {

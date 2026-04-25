@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -152,6 +153,7 @@ type MultiNodeConfig struct {
 	HealthCheckInterval time.Duration      `json:"healthCheckInterval"` // Health check interval
 	MaxRetries          int                `json:"maxRetries"`          // Max retries per endpoint
 	RetryDelay          time.Duration      `json:"retryDelay"`          // Delay between retries
+	EndpointLabels      map[string]string  `json:"endpointLabels,omitempty"`
 }
 
 // SystemMetrics holds system performance metrics
@@ -280,6 +282,7 @@ type TxFuzzConfig struct {
 
 	// Enhanced configuration for stress testing
 	MultiNode       *MultiNodeConfig `json:"multiNode,omitempty"`   // Multi-node configuration
+	Replay          *TxReplayConfig  `json:"replay,omitempty"`      // Deterministic replay configuration
 	LoadPattern     *LoadPattern     `json:"loadPattern,omitempty"` // Load pattern configuration
 	EnableMetrics   bool             `json:"enableMetrics"`         // Enable system metrics collection
 	MetricsInterval time.Duration    `json:"metricsInterval"`       // Metrics collection interval
@@ -293,6 +296,12 @@ type TxFuzzConfig struct {
 func NewTxFuzzer(cfg *TxFuzzConfig, accounts []config.Account, logger utils.Logger) (*TxFuzzer, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sendCtx, sendCancel := context.WithCancel(context.Background())
+
+	if err := validateReplayConfig(cfg, accounts); err != nil {
+		cancel()
+		sendCancel()
+		return nil, err
+	}
 
 	// Initialize random number generator
 	seed := cfg.Seed
@@ -431,6 +440,12 @@ func NewTxFuzzer(cfg *TxFuzzConfig, accounts []config.Account, logger utils.Logg
 		tf.chainID = chainID
 	}
 
+	if err := validateReplayFunding(cfg, accounts, tf.clients); err != nil {
+		cancel()
+		sendCancel()
+		return nil, err
+	}
+
 	// Initialize mutation components if enabled
 	if cfg.UseMutation {
 		mutationConfig := mutation.DefaultMutationConfig()
@@ -457,6 +472,10 @@ func NewTxFuzzer(cfg *TxFuzzConfig, accounts []config.Account, logger utils.Logg
 // Start begins the transaction fuzzing process with enhanced load patterns
 func (tf *TxFuzzer) Start(cfg *TxFuzzConfig) error {
 	tf.logger.Info("Starting enhanced transaction fuzzing with seed: %d", tf.rng.Int63())
+
+	if cfg != nil && cfg.Replay != nil && cfg.Replay.Enabled {
+		return tf.executeReplayPlan(cfg)
+	}
 
 	// Initialize load pattern if specified
 	if cfg.LoadPattern != nil {
@@ -1105,6 +1124,164 @@ func (tf *TxFuzzer) sendRandomTransaction(cfg *TxFuzzConfig) error {
 		tx.Hash().Hex(), endpoint, latency)
 
 	return nil
+}
+
+func (tf *TxFuzzer) executeReplayPlan(cfg *TxFuzzConfig) error {
+	plan, err := buildTxReplayPlan(cfg.Replay, cfg.MultiNode, tf.accounts)
+	if err != nil {
+		return err
+	}
+
+	for _, group := range plan.Groups {
+		if tf.finalizing.Load() {
+			return nil
+		}
+		tf.executeReplayGroup(cfg, group)
+	}
+	return nil
+}
+
+func (tf *TxFuzzer) executeReplayGroup(cfg *TxFuzzConfig, group txReplayGroup) {
+	for _, assignment := range group.Assignments {
+		if !tf.beginSend() {
+			return
+		}
+		tf.executeReplayAssignment(cfg, group, assignment)
+		tf.endSend()
+	}
+}
+
+func (tf *TxFuzzer) executeReplayAssignment(cfg *TxFuzzConfig, group txReplayGroup, assignment txReplayAssignment) {
+	attempt := tf.beginTxAttempt(assignment.Endpoint)
+	attempt.Replay = &txReplayAttemptMetadata{
+		GroupID:        group.ID,
+		EndpointIndex:  assignment.EndpointIndex,
+		ScheduledCount: len(group.Assignments),
+		Client:         assignment.Client,
+	}
+
+	privateKey, err := crypto.HexToECDSA(assignment.Account.PrivateKey)
+	if err != nil {
+		attempt.Account = common.HexToAddress(assignment.Account.Address)
+		tf.finishTxAttemptRejected(attempt, txStageAccountDecode, fmt.Errorf("failed to parse replay private key: %w", err), 0, 0)
+		return
+	}
+	attempt.Account = crypto.PubkeyToAddress(privateKey.PublicKey)
+
+	client := tf.getHealthyClient(assignment.Endpoint)
+	if client == nil {
+		tf.finishTxAttemptRejected(attempt, txStageEndpointSelection, fmt.Errorf("no healthy client available for endpoint: %s", assignment.Endpoint), 0, 0)
+		return
+	}
+
+	nonce, err := tf.nonces.Next(tf.activeSendContext(), client, attempt.Account)
+	if err != nil {
+		tf.finishTxAttemptRejected(attempt, txStageNonceFetch, fmt.Errorf("failed to get replay nonce: %w", err), 0, 0)
+		return
+	}
+	attempt.Nonce = &nonce
+
+	tx, err := tf.buildReplayTransaction(privateKey, nonce, group, cfg)
+	if err != nil {
+		tf.finishTxAttemptRejected(attempt, txStageTxGeneration, fmt.Errorf("failed to build replay transaction: %w", err), 0, 0)
+		return
+	}
+	attempt.AttachTransaction(tx, false, "replay")
+	tf.captureExpectationEvidence(attempt)
+
+	startTime := time.Now()
+	retryCount, err := tf.sendTransactionWithRetry(assignment.Endpoint, tx, cfg)
+	latency := time.Since(startTime)
+	tf.updateTransactionMetrics(assignment.Endpoint, err, latency)
+
+	if err != nil {
+		if class := ClassifySendError(err); class == SendErrorNonce {
+			_, _ = tf.nonces.Refresh(tf.activeSendContext(), client, attempt.Account)
+		}
+		tf.finishTxAttemptRejected(attempt, txStageSend, err, latency, retryCount)
+		tf.updateStats("failed", false)
+		return
+	}
+
+	tf.recordTransaction(tx, false, "replay")
+	tf.finishTxAttemptAccepted(attempt, latency, retryCount)
+	tf.updateStats("sent", false)
+	if cfg.EnableTracking {
+		tf.startReceiptMonitor(attempt.AttemptID, tx.Hash(), assignment.Endpoint, cfg.ConfirmBlocks)
+	}
+}
+
+func (tf *TxFuzzer) buildReplayTransaction(privateKey *ecdsa.PrivateKey, nonce uint64, group txReplayGroup, cfg *TxFuzzConfig) (*types.Transaction, error) {
+	gasLimit, err := replayGasLimit(group.TxType, group.Payload, nil)
+	if err != nil {
+		return nil, fmt.Errorf("calculate replay gas limit: %w", err)
+	}
+	if cfg != nil && cfg.MaxGasLimit > 0 && gasLimit > cfg.MaxGasLimit {
+		gasLimit = cfg.MaxGasLimit
+	}
+	if gasLimit < 21000 {
+		gasLimit = 21000
+	}
+	baseGasPrice := big.NewInt(1)
+	if cfg != nil && cfg.MaxGasPrice != nil && cfg.MaxGasPrice.Sign() > 0 {
+		baseGasPrice = new(big.Int).Set(cfg.MaxGasPrice)
+	}
+
+	var tx *types.Transaction
+	switch group.TxType {
+	case types.DynamicFeeTxType:
+		tip := new(big.Int).Set(baseGasPrice)
+		feeCap := new(big.Int).Mul(baseGasPrice, big.NewInt(2))
+		tx = types.NewTx(&types.DynamicFeeTx{
+			ChainID:   tf.chainID,
+			Nonce:     nonce,
+			To:        &group.To,
+			Value:     big.NewInt(1),
+			Gas:       gasLimit,
+			GasFeeCap: feeCap,
+			GasTipCap: tip,
+			Data:      append([]byte(nil), group.Payload...),
+		})
+	case types.AccessListTxType:
+		tx = types.NewTx(&types.AccessListTx{
+			ChainID:    tf.chainID,
+			Nonce:      nonce,
+			To:         &group.To,
+			Value:      big.NewInt(1),
+			Gas:        gasLimit,
+			GasPrice:   baseGasPrice,
+			Data:       append([]byte(nil), group.Payload...),
+			AccessList: types.AccessList{},
+		})
+	default:
+		tx = types.NewTransaction(nonce, group.To, big.NewInt(1), gasLimit, baseGasPrice, append([]byte(nil), group.Payload...))
+	}
+
+	var signer types.Signer
+	switch tx.Type() {
+	case types.DynamicFeeTxType:
+		signer = types.NewLondonSigner(tf.chainID)
+	case types.AccessListTxType:
+		signer = types.NewEIP2930Signer(tf.chainID)
+	default:
+		signer = types.NewEIP155Signer(tf.chainID)
+	}
+	return types.SignTx(tx, signer, privateKey)
+}
+
+func replayGasLimit(txType uint8, payload []byte, accessList types.AccessList) (uint64, error) {
+	intrinsicGas, err := core.IntrinsicGas(payload, accessList, nil, false, true, true, true)
+	if err != nil {
+		return 0, err
+	}
+	floorDataGas, err := core.FloorDataGas(payload)
+	if err != nil {
+		return 0, err
+	}
+	if floorDataGas > intrinsicGas {
+		return floorDataGas, nil
+	}
+	return intrinsicGas, nil
 }
 
 // recordTransaction records a transaction in the tracking system
@@ -1763,6 +1940,13 @@ func (tf *TxFuzzer) sendAttemptEvent(attempt *txAttemptContext, stage txStage, s
 		latencyMS := latency.Milliseconds()
 		event.LatencyMS = &latencyMS
 	}
+	if attempt.Replay != nil {
+		event.ReplayGroupID = attempt.Replay.GroupID
+		event.ReplayClient = attempt.Replay.Client
+		event.ReplayScheduledCount = attempt.Replay.ScheduledCount
+		replayEndpointIndex := attempt.Replay.EndpointIndex
+		event.ReplayEndpointIndex = &replayEndpointIndex
+	}
 	if sendErr != nil {
 		class := ClassifySendError(sendErr)
 		event.ErrorClass = string(class)
@@ -1810,6 +1994,9 @@ func (tf *TxFuzzer) recordReceiptObservation(attemptID string, lookupEndpoint st
 	if attempt.TxHashSet {
 		event.TxHash = attempt.TxHash.Hex()
 	}
+	if attempt.Replay != nil {
+		event.ReplayGroupID = attempt.Replay.GroupID
+	}
 	if receipt != nil {
 		if receipt.BlockNumber != nil {
 			blockNumber := receipt.BlockNumber.Uint64()
@@ -1852,6 +2039,9 @@ func (tf *TxFuzzer) recordConfirmationObservation(attemptID string, lookupEndpoi
 	if attempt.TxHashSet {
 		event.TxHash = attempt.TxHash.Hex()
 	}
+	if attempt.Replay != nil {
+		event.ReplayGroupID = attempt.Replay.GroupID
+	}
 	return tf.recordReceiptObservationEvent(event)
 }
 
@@ -1871,6 +2061,9 @@ func (tf *TxFuzzer) recordTimeoutObservation(attemptID string, lookupEndpoint st
 		LookupEndpoint: lookupEndpoint,
 		ReceiptStatus:  txReceiptTimeout,
 		Terminal:       true,
+	}
+	if attempt.Replay != nil {
+		event.ReplayGroupID = attempt.Replay.GroupID
 	}
 	return tf.recordReceiptObservationEvent(event)
 }
@@ -1964,6 +2157,9 @@ func (tf *TxFuzzer) Finalize(finishedAt time.Time) TxRunSummary {
 			if attempt.TxHashSet {
 				event.TxHash = attempt.TxHash.Hex()
 			}
+			if attempt.Replay != nil {
+				event.ReplayGroupID = attempt.Replay.GroupID
+			}
 			tf.recordReceiptObservationEvent(event)
 		}
 	}
@@ -1972,6 +2168,11 @@ func (tf *TxFuzzer) Finalize(finishedAt time.Time) TxRunSummary {
 		if tf.txAnomalyRecorder != nil {
 			for _, event := range anomalies {
 				_ = tf.txAnomalyRecorder.Append(event)
+			}
+		}
+		if tf.txExpectationRecorder != nil {
+			for _, event := range tf.txAnomalyProjection.ReplayGroupStatusEvents() {
+				_ = tf.txExpectationRecorder.Append(event)
 			}
 		}
 		if tf.txAnomalySummaryPath != "" {

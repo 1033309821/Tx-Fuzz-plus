@@ -14,6 +14,7 @@ type txRPCClient interface {
 	BlockNumber(ctx context.Context) (uint64, error)
 	PendingNonceAt(ctx context.Context, account common.Address) (uint64, error)
 	NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error)
+	BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error)
 	ChainID(ctx context.Context) (*big.Int, error)
 	Close()
 }

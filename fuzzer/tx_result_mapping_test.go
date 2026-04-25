@@ -390,6 +390,7 @@ type fakeTxRPCClient struct {
 	receiptErr   error
 	receiptCalls int
 	blockNumber  uint64
+	balance      *big.Int
 }
 
 func (f *fakeTxRPCClient) SendTransaction(ctx context.Context, tx *types.Transaction) error {
@@ -419,6 +420,12 @@ func (f *fakeTxRPCClient) PendingNonceAt(ctx context.Context, account common.Add
 }
 func (f *fakeTxRPCClient) NonceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (uint64, error) {
 	return 0, nil
+}
+func (f *fakeTxRPCClient) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
+	if f.balance == nil {
+		return big.NewInt(1), nil
+	}
+	return new(big.Int).Set(f.balance), nil
 }
 func (f *fakeTxRPCClient) ChainID(ctx context.Context) (*big.Int, error) { return big.NewInt(1), nil }
 func (f *fakeTxRPCClient) Close()                                        {}

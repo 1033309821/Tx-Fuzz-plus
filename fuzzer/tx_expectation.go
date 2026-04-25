@@ -2,17 +2,22 @@ package fuzzer
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 const txExpectationSchemaVersion = 1
 
 type txExpectationEventType string
 
-const txExpectationEvidenceRecorded txExpectationEventType = "tx_expectation_recorded"
+const (
+	txExpectationEvidenceRecorded          txExpectationEventType = "tx_expectation_recorded"
+	txExpectationReplayGroupStatusRecorded txExpectationEventType = "tx_replay_group_status_recorded"
+)
 
 type txExpectationVerdict string
 
@@ -35,21 +40,33 @@ const (
 )
 
 type txExpectationEvent struct {
-	SchemaVersion    int                    `json:"schema_version"`
-	Event            txExpectationEventType `json:"event"`
-	RunID            string                 `json:"run_id"`
-	AttemptID        string                 `json:"attempt_id"`
-	Timestamp        time.Time              `json:"timestamp"`
-	Endpoint         string                 `json:"endpoint,omitempty"`
-	Account          string                 `json:"account,omitempty"`
-	Nonce            *uint64                `json:"nonce,omitempty"`
-	TxHash           string                 `json:"tx_hash,omitempty"`
-	To               string                 `json:"to,omitempty"`
-	PayloadHash      string                 `json:"payload_hash,omitempty"`
-	StaticVerdict    txExpectationVerdict   `json:"static_verdict"`
-	StaticReason     string                 `json:"static_reason,omitempty"`
-	PreflightVerdict txExpectationVerdict   `json:"preflight_verdict"`
-	PreflightReason  string                 `json:"preflight_reason,omitempty"`
+	SchemaVersion          int                       `json:"schema_version"`
+	Event                  txExpectationEventType    `json:"event"`
+	RunID                  string                    `json:"run_id"`
+	AttemptID              string                    `json:"attempt_id"`
+	Timestamp              time.Time                 `json:"timestamp"`
+	Endpoint               string                    `json:"endpoint,omitempty"`
+	Account                string                    `json:"account,omitempty"`
+	Nonce                  *uint64                   `json:"nonce,omitempty"`
+	TxHash                 string                    `json:"tx_hash,omitempty"`
+	To                     string                    `json:"to,omitempty"`
+	PayloadHash            string                    `json:"payload_hash,omitempty"`
+	StaticVerdict          txExpectationVerdict      `json:"static_verdict"`
+	StaticReason           string                    `json:"static_reason,omitempty"`
+	PreflightVerdict       txExpectationVerdict      `json:"preflight_verdict"`
+	PreflightReason        string                    `json:"preflight_reason,omitempty"`
+	ReplayGroupID          string                    `json:"replay_group_id,omitempty"`
+	ReplayGroupComplete    *bool                     `json:"replay_group_complete,omitempty"`
+	ReplayScheduledCount   int                       `json:"replay_scheduled_count,omitempty"`
+	ReplayEndpointIndex    *int                      `json:"replay_endpoint_index,omitempty"`
+	ReplayNoiseAnnotations []txReplayNoiseAnnotation `json:"replay_noise_annotations,omitempty"`
+}
+
+type txReplayNoiseAnnotation struct {
+	Client     string `json:"client"`
+	Stage      string `json:"stage"`
+	ReasonCode string `json:"reason_code"`
+	Detail     string `json:"detail"`
 }
 
 func newTxExpectationRecorder(path string) (*txAttemptRecorder, error) {
@@ -83,9 +100,15 @@ func (tf *TxFuzzer) captureExpectationEvidence(attempt *txAttemptContext) bool {
 	if attempt.Tx.To() != nil {
 		event.To = attempt.Tx.To().Hex()
 	}
+	if attempt.Replay != nil {
+		event.ReplayGroupID = attempt.Replay.GroupID
+		event.ReplayScheduledCount = attempt.Replay.ScheduledCount
+		replayEndpointIndex := attempt.Replay.EndpointIndex
+		event.ReplayEndpointIndex = &replayEndpointIndex
+	}
 
 	event.StaticVerdict, event.StaticReason = staticExpectationVerdict(attempt)
-	event.PreflightVerdict, event.PreflightReason = tf.preflightExpectationVerdict(attempt)
+	event.PreflightVerdict, event.PreflightReason, event.ReplayNoiseAnnotations = tf.preflightExpectationVerdict(attempt)
 
 	return tf.recordExpectationEvent(event)
 }
@@ -110,22 +133,13 @@ func staticExpectationVerdict(attempt *txAttemptContext) (txExpectationVerdict, 
 	return txExpectationSuccess, txStaticReasonBasicEnvelopeValid
 }
 
-func (tf *TxFuzzer) preflightExpectationVerdict(attempt *txAttemptContext) (txExpectationVerdict, string) {
+func (tf *TxFuzzer) preflightExpectationVerdict(attempt *txAttemptContext) (txExpectationVerdict, string, []txReplayNoiseAnnotation) {
 	client := tf.getPreflightClient(attempt.Endpoint)
 	if client == nil {
-		return txExpectationUnknown, txPreflightReasonClientUnavailable
+		return txExpectationUnknown, txPreflightReasonClientUnavailable, nil
 	}
 
-	call := ethereum.CallMsg{
-		From:      attempt.Account,
-		To:        attempt.Tx.To(),
-		Gas:       attempt.Tx.Gas(),
-		GasPrice:  attempt.Tx.GasPrice(),
-		GasFeeCap: attempt.Tx.GasFeeCap(),
-		GasTipCap: attempt.Tx.GasTipCap(),
-		Value:     attempt.Tx.Value(),
-		Data:      attempt.Tx.Data(),
-	}
+	call := buildPreflightCallMsg(attempt)
 
 	ctx := tf.activeSendContext()
 	if ctx == nil {
@@ -140,17 +154,40 @@ func (tf *TxFuzzer) preflightExpectationVerdict(attempt *txAttemptContext) (txEx
 
 	if _, err := client.EstimateGas(ctx, call); err != nil {
 		if ctx.Err() != nil {
-			return txExpectationUnknown, txPreflightReasonForContextErr(ctx.Err())
+			return txExpectationUnknown, txPreflightReasonForContextErr(ctx.Err()), nil
 		}
-		return txExpectationFailure, txPreflightReasonSimulationFailed
+		return txExpectationFailure, txPreflightReasonSimulationFailed, replayNoiseAnnotationsForError(attempt, err)
 	}
 	if _, err := client.CallContract(ctx, call, nil); err != nil {
 		if ctx.Err() != nil {
-			return txExpectationUnknown, txPreflightReasonForContextErr(ctx.Err())
+			return txExpectationUnknown, txPreflightReasonForContextErr(ctx.Err()), nil
 		}
-		return txExpectationFailure, txPreflightReasonSimulationFailed
+		return txExpectationFailure, txPreflightReasonSimulationFailed, replayNoiseAnnotationsForError(attempt, err)
 	}
-	return txExpectationSuccess, txPreflightReasonSimulationPassed
+	return txExpectationSuccess, txPreflightReasonSimulationPassed, nil
+}
+
+func buildPreflightCallMsg(attempt *txAttemptContext) ethereum.CallMsg {
+	call := ethereum.CallMsg{
+		From:  attempt.Account,
+		To:    attempt.Tx.To(),
+		Gas:   attempt.Tx.Gas(),
+		Value: attempt.Tx.Value(),
+		Data:  attempt.Tx.Data(),
+	}
+
+	switch attempt.Tx.Type() {
+	case types.DynamicFeeTxType:
+		call.GasFeeCap = attempt.Tx.GasFeeCap()
+		call.GasTipCap = attempt.Tx.GasTipCap()
+	case types.AccessListTxType:
+		call.GasPrice = attempt.Tx.GasPrice()
+		call.AccessList = attempt.Tx.AccessList()
+	default:
+		call.GasPrice = attempt.Tx.GasPrice()
+	}
+
+	return call
 }
 
 func (tf *TxFuzzer) getPreflightClient(endpoint string) txPreflightClient {
@@ -177,6 +214,26 @@ func txPreflightReasonForContextErr(err error) string {
 	default:
 		return txPreflightReasonSimulationFailed
 	}
+}
+
+func replayNoiseAnnotationsForError(attempt *txAttemptContext, err error) []txReplayNoiseAnnotation {
+	if attempt == nil || attempt.Replay == nil || err == nil {
+		return nil
+	}
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "nonce") {
+		return nil
+	}
+	client := attempt.Replay.Client
+	if client == "" {
+		client = attempt.Endpoint
+	}
+	return []txReplayNoiseAnnotation{{
+		Client:     client,
+		Stage:      "preflight",
+		ReasonCode: "client_nonce_validation_error",
+		Detail:     err.Error(),
+	}}
 }
 
 func (tf *TxFuzzer) recordExpectationEvent(event txExpectationEvent) bool {

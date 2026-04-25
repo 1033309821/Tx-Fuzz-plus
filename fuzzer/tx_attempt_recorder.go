@@ -58,35 +58,39 @@ const (
 var errTxRecorderClosed = errors.New("tx attempt recorder is closed")
 
 type txAttemptEvent struct {
-	SchemaVersion int          `json:"schema_version"`
-	Event         txEventType  `json:"event"`
-	RunID         string       `json:"run_id"`
-	AttemptID     string       `json:"attempt_id"`
-	Timestamp     time.Time    `json:"timestamp"`
-	Stage         txStage      `json:"stage"`
-	SendStatus    txSendStatus `json:"send_status"`
-	Endpoint      string       `json:"endpoint,omitempty"`
-	Account       string       `json:"account,omitempty"`
-	Nonce         *uint64      `json:"nonce,omitempty"`
-	ChainID       string       `json:"chain_id,omitempty"`
-	TxHash        string       `json:"tx_hash,omitempty"`
-	ReturnedHash  string       `json:"returned_hash,omitempty"`
-	TxType        *uint8       `json:"tx_type,omitempty"`
-	To            string       `json:"to,omitempty"`
-	Value         string       `json:"value,omitempty"`
-	Gas           *uint64      `json:"gas,omitempty"`
-	GasPrice      string       `json:"gas_price,omitempty"`
-	GasFeeCap     string       `json:"gas_fee_cap,omitempty"`
-	GasTipCap     string       `json:"gas_tip_cap,omitempty"`
-	PayloadLength *int         `json:"payload_length,omitempty"`
-	PayloadHash   string       `json:"payload_hash,omitempty"`
-	MutationUsed  *bool        `json:"mutation_used,omitempty"`
-	MutationType  string       `json:"mutation_type,omitempty"`
-	LatencyMS     *int64       `json:"latency_ms,omitempty"`
-	RetryCount    int          `json:"retry_count"`
-	ErrorClass    string       `json:"error_class,omitempty"`
-	ErrorAction   string       `json:"error_action,omitempty"`
-	ErrorMessage  string       `json:"error_message,omitempty"`
+	SchemaVersion        int          `json:"schema_version"`
+	Event                txEventType  `json:"event"`
+	RunID                string       `json:"run_id"`
+	AttemptID            string       `json:"attempt_id"`
+	Timestamp            time.Time    `json:"timestamp"`
+	Stage                txStage      `json:"stage"`
+	SendStatus           txSendStatus `json:"send_status"`
+	Endpoint             string       `json:"endpoint,omitempty"`
+	Account              string       `json:"account,omitempty"`
+	Nonce                *uint64      `json:"nonce,omitempty"`
+	ChainID              string       `json:"chain_id,omitempty"`
+	TxHash               string       `json:"tx_hash,omitempty"`
+	ReturnedHash         string       `json:"returned_hash,omitempty"`
+	TxType               *uint8       `json:"tx_type,omitempty"`
+	To                   string       `json:"to,omitempty"`
+	Value                string       `json:"value,omitempty"`
+	Gas                  *uint64      `json:"gas,omitempty"`
+	GasPrice             string       `json:"gas_price,omitempty"`
+	GasFeeCap            string       `json:"gas_fee_cap,omitempty"`
+	GasTipCap            string       `json:"gas_tip_cap,omitempty"`
+	PayloadLength        *int         `json:"payload_length,omitempty"`
+	PayloadHash          string       `json:"payload_hash,omitempty"`
+	MutationUsed         *bool        `json:"mutation_used,omitempty"`
+	MutationType         string       `json:"mutation_type,omitempty"`
+	LatencyMS            *int64       `json:"latency_ms,omitempty"`
+	RetryCount           int          `json:"retry_count"`
+	ErrorClass           string       `json:"error_class,omitempty"`
+	ErrorAction          string       `json:"error_action,omitempty"`
+	ErrorMessage         string       `json:"error_message,omitempty"`
+	ReplayGroupID        string       `json:"replay_group_id,omitempty"`
+	ReplayClient         string       `json:"replay_client,omitempty"`
+	ReplayScheduledCount int          `json:"replay_scheduled_count,omitempty"`
+	ReplayEndpointIndex  *int         `json:"replay_endpoint_index,omitempty"`
 }
 
 type txReceiptObservationEvent struct {
@@ -107,6 +111,14 @@ type txReceiptObservationEvent struct {
 	ContractAddress   string          `json:"contract_address,omitempty"`
 	LogsCount         *int            `json:"logs_count,omitempty"`
 	Terminal          bool            `json:"terminal"`
+	ReplayGroupID     string          `json:"replay_group_id,omitempty"`
+}
+
+type txReplayAttemptMetadata struct {
+	GroupID        string
+	EndpointIndex  int
+	ScheduledCount int
+	Client         string
 }
 
 type txAttemptRecorder struct {
@@ -308,6 +320,7 @@ type txAttemptContext struct {
 	Tx           *types.Transaction
 	MutationUsed bool
 	MutationType string
+	Replay       *txReplayAttemptMetadata
 }
 
 func (a *txAttemptContext) AttachTransaction(tx *types.Transaction, mutationUsed bool, mutationType string) {

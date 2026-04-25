@@ -71,21 +71,31 @@ type FuzzingConfig struct {
 
 // TxFuzzingConfig holds transaction fuzzing configuration
 type TxFuzzingConfig struct {
-	Enabled                 bool     `yaml:"enabled"`
-	RPCEndpoint             string   `yaml:"rpc_endpoint"`
-	RPCEndpoints            []string `yaml:"rpc_endpoints"`
-	ChainID                 int64    `yaml:"chain_id"`
-	MaxGasPrice             int64    `yaml:"max_gas_price"` // in wei
-	MaxGasLimit             uint64   `yaml:"max_gas_limit"`
-	TxPerSecond             int      `yaml:"tx_per_second"`
-	FuzzDurationSec         int      `yaml:"fuzz_duration_sec"`
-	Seed                    int64    `yaml:"seed"`
-	UseAccounts             bool     `yaml:"use_accounts"` // whether to use predefined accounts
-	TxResultMappingEnabled  bool     `yaml:"tx_result_mapping_enabled"`
-	TxResultLogPath         string   `yaml:"tx_result_log_path"`
-	ReceiptDrainDurationSec int      `yaml:"receipt_drain_duration_sec"`
-	EnableTracking          bool     `yaml:"enable_tracking"`
-	ConfirmBlocks           uint64   `yaml:"confirm_blocks"`
+	Enabled                 bool              `yaml:"enabled"`
+	RPCEndpoint             string            `yaml:"rpc_endpoint"`
+	RPCEndpoints            []string          `yaml:"rpc_endpoints"`
+	ChainID                 int64             `yaml:"chain_id"`
+	MaxGasPrice             int64             `yaml:"max_gas_price"` // in wei
+	MaxGasLimit             uint64            `yaml:"max_gas_limit"`
+	TxPerSecond             int               `yaml:"tx_per_second"`
+	FuzzDurationSec         int               `yaml:"fuzz_duration_sec"`
+	Seed                    int64             `yaml:"seed"`
+	UseAccounts             bool              `yaml:"use_accounts"` // whether to use predefined accounts
+	TxResultMappingEnabled  bool              `yaml:"tx_result_mapping_enabled"`
+	TxResultLogPath         string            `yaml:"tx_result_log_path"`
+	ReceiptDrainDurationSec int               `yaml:"receipt_drain_duration_sec"`
+	EnableTracking          bool              `yaml:"enable_tracking"`
+	ConfirmBlocks           uint64            `yaml:"confirm_blocks"`
+	Replay                  TxReplayConfig    `yaml:"replay"`
+	EndpointLabels          map[string]string `yaml:"-"`
+}
+
+type TxReplayConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	GroupCount        int    `yaml:"group_count"`
+	EndpointsPerGroup int    `yaml:"endpoints_per_group"`
+	TxType            string `yaml:"tx_type"`
+	PayloadSize       int    `yaml:"payload_size"`
 }
 
 // TxFuzzerConfig holds transaction fuzzer configuration
@@ -522,7 +532,18 @@ func (c *Config) IsTxFuzzingEnabled() bool {
 
 // GetTxFuzzingConfig returns the transaction fuzzing configuration
 func (c *Config) GetTxFuzzingConfig() TxFuzzingConfig {
-	return c.TxFuzzing
+	txCfg := c.TxFuzzing
+	if len(c.Runtime.ExecutionNodes) == 0 {
+		return txCfg
+	}
+	txCfg.EndpointLabels = make(map[string]string, len(c.Runtime.ExecutionNodes))
+	for _, node := range c.Runtime.ExecutionNodes {
+		if node.RPC == "" || node.ELClient == "" {
+			continue
+		}
+		txCfg.EndpointLabels[normalizeHTTPURL(node.RPC)] = node.ELClient
+	}
+	return txCfg
 }
 
 func (c *Config) GetRPCURL(index int) string {

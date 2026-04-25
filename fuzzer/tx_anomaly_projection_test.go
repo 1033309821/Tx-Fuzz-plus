@@ -99,3 +99,196 @@ func TestTxAnomalyProjectionEmitsCrossNodeDisagreementForSharedPayloadHash(t *te
 	assert.Equal(t, int64(1), summary.AnomalyTypeCounts[string(txAnomalyPredictionActualMismatch)])
 	assert.Equal(t, int64(2), summary.AnomalyEligibleCount)
 }
+
+func TestTxAnomalyProjectionUsesReplayGroupIDWithoutMergingNonReplayPayloadCollisions(t *testing.T) {
+	projection := newTxAnomalyProjection()
+
+	projection.RecordExpectation(txExpectationEvent{
+		RunID:                "run-1",
+		AttemptID:            "replay-a",
+		Timestamp:            time.Now().UTC(),
+		Endpoint:             "http://node-a",
+		PayloadHash:          "shared-payload",
+		ReplayGroupID:        "replay-group-1",
+		ReplayEndpointIndex:  intPtr(0),
+		ReplayScheduledCount: 2,
+		StaticVerdict:        txExpectationSuccess,
+		PreflightVerdict:     txExpectationSuccess,
+	})
+	projection.RecordExpectation(txExpectationEvent{
+		RunID:                "run-1",
+		AttemptID:            "replay-b",
+		Timestamp:            time.Now().UTC(),
+		Endpoint:             "http://node-b",
+		PayloadHash:          "shared-payload",
+		ReplayGroupID:        "replay-group-1",
+		ReplayEndpointIndex:  intPtr(1),
+		ReplayScheduledCount: 2,
+		StaticVerdict:        txExpectationSuccess,
+		PreflightVerdict:     txExpectationSuccess,
+	})
+	projection.RecordExpectation(txExpectationEvent{
+		RunID:            "run-1",
+		AttemptID:        "random-collision",
+		Timestamp:        time.Now().UTC(),
+		Endpoint:         "http://node-c",
+		PayloadHash:      "shared-payload",
+		StaticVerdict:    txExpectationSuccess,
+		PreflightVerdict: txExpectationSuccess,
+	})
+
+	projection.RecordSendAttempt(txAttemptEvent{RunID: "run-1", AttemptID: "replay-a", Timestamp: time.Now().UTC(), Stage: txStageSend, SendStatus: txSendAccepted, Endpoint: "http://node-a", ReplayGroupID: "replay-group-1", ReplayEndpointIndex: intPtr(0), ReplayScheduledCount: 2})
+	projection.RecordSendAttempt(txAttemptEvent{RunID: "run-1", AttemptID: "replay-b", Timestamp: time.Now().UTC(), Stage: txStageSend, SendStatus: txSendAccepted, Endpoint: "http://node-b", ReplayGroupID: "replay-group-1", ReplayEndpointIndex: intPtr(1), ReplayScheduledCount: 2})
+	projection.RecordSendAttempt(txAttemptEvent{RunID: "run-1", AttemptID: "random-collision", Timestamp: time.Now().UTC(), Stage: txStageSend, SendStatus: txSendAccepted, Endpoint: "http://node-c"})
+
+	projection.RecordReceiptObservation(txReceiptObservationEvent{RunID: "run-1", AttemptID: "replay-a", Timestamp: time.Now().UTC(), ReceiptStatus: txReceiptConfirmed, Terminal: true}, 0)
+	projection.RecordReceiptObservation(txReceiptObservationEvent{RunID: "run-1", AttemptID: "replay-b", Timestamp: time.Now().UTC(), ReceiptStatus: txReceiptReverted, Terminal: true}, 0)
+	projection.RecordReceiptObservation(txReceiptObservationEvent{RunID: "run-1", AttemptID: "random-collision", Timestamp: time.Now().UTC(), ReceiptStatus: txReceiptReverted, Terminal: true}, 0)
+
+	details, summary := projection.BuildReport()
+
+	var crossNode *txAnomalyEvent
+	for i := range details {
+		if details[i].Type == txAnomalyCrossNodeOutcomeDisagreement {
+			crossNode = &details[i]
+			break
+		}
+	}
+	require.NotNil(t, crossNode)
+	assert.Equal(t, "replay-group-1", crossNode.ReplayGroupID)
+	assert.ElementsMatch(t, []string{"replay-a", "replay-b"}, crossNode.RelatedAttemptIDs)
+	assert.NotContains(t, crossNode.RelatedAttemptIDs, "random-collision")
+	assert.Equal(t, int64(1), summary.AnomalyTypeCounts[string(txAnomalyCrossNodeOutcomeDisagreement)])
+}
+
+func TestTxAnomalyProjectionExcludesIncompleteReplayGroupsFromCrossNodeDisagreement(t *testing.T) {
+	projection := newTxAnomalyProjection()
+
+	projection.RecordExpectation(txExpectationEvent{
+		RunID:                "run-1",
+		AttemptID:            "replay-a",
+		Timestamp:            time.Now().UTC(),
+		Endpoint:             "http://node-a",
+		ReplayGroupID:        "replay-group-2",
+		ReplayEndpointIndex:  intPtr(0),
+		ReplayScheduledCount: 2,
+		StaticVerdict:        txExpectationSuccess,
+		PreflightVerdict:     txExpectationSuccess,
+	})
+	projection.RecordExpectation(txExpectationEvent{
+		RunID:                "run-1",
+		AttemptID:            "replay-b",
+		Timestamp:            time.Now().UTC(),
+		Endpoint:             "http://node-b",
+		ReplayGroupID:        "replay-group-2",
+		ReplayEndpointIndex:  intPtr(1),
+		ReplayScheduledCount: 2,
+		StaticVerdict:        txExpectationSuccess,
+		PreflightVerdict:     txExpectationSuccess,
+	})
+	projection.RecordSendAttempt(txAttemptEvent{RunID: "run-1", AttemptID: "replay-a", Timestamp: time.Now().UTC(), Stage: txStageSend, SendStatus: txSendAccepted, Endpoint: "http://node-a", ReplayGroupID: "replay-group-2", ReplayEndpointIndex: intPtr(0), ReplayScheduledCount: 2})
+	projection.RecordSendAttempt(txAttemptEvent{RunID: "run-1", AttemptID: "replay-b", Timestamp: time.Now().UTC(), Stage: txStageSend, SendStatus: txSendAccepted, Endpoint: "http://node-b", ReplayGroupID: "replay-group-2", ReplayEndpointIndex: intPtr(1), ReplayScheduledCount: 2})
+	projection.RecordReceiptObservation(txReceiptObservationEvent{RunID: "run-1", AttemptID: "replay-a", Timestamp: time.Now().UTC(), ReceiptStatus: txReceiptConfirmed, Terminal: true}, 0)
+
+	details, summary := projection.BuildReport()
+
+	var incomplete *txAnomalyEvent
+	for _, detail := range details {
+		assert.NotEqual(t, txAnomalyCrossNodeOutcomeDisagreement, detail.Type)
+		if detail.Type == txAnomalyReplayGroupIncomplete {
+			incomplete = &detail
+		}
+	}
+	assert.Zero(t, summary.AnomalyTypeCounts[string(txAnomalyCrossNodeOutcomeDisagreement)])
+	require.NotNil(t, incomplete)
+	assert.Equal(t, "replay-group-2", incomplete.ReplayGroupID)
+	require.NotNil(t, incomplete.ReplayGroupComplete)
+	assert.False(t, *incomplete.ReplayGroupComplete)
+}
+
+func TestTxAnomalyProjectionAnnotatesPreflightOnlyReplayNoiseWithoutCrossNodeDisagreement(t *testing.T) {
+	projection := newTxAnomalyProjection()
+	noise := []txReplayNoiseAnnotation{{
+		Client:     "ethrex",
+		Stage:      string(txStageSend),
+		ReasonCode: "client_nonce_validation_error",
+		Detail:     "Vm execution error: Invalid Transaction: Nonce mismatch: expected 2, got 1",
+	}}
+
+	projection.RecordExpectation(txExpectationEvent{
+		RunID:                  "run-1",
+		AttemptID:              "replay-a",
+		Timestamp:              time.Now().UTC(),
+		Endpoint:               "http://node-a",
+		ReplayGroupID:          "replay-group-3",
+		ReplayEndpointIndex:    intPtr(0),
+		ReplayScheduledCount:   2,
+		StaticVerdict:          txExpectationSuccess,
+		PreflightVerdict:       txExpectationFailure,
+		ReplayNoiseAnnotations: noise,
+	})
+	projection.RecordExpectation(txExpectationEvent{
+		RunID:                "run-1",
+		AttemptID:            "replay-b",
+		Timestamp:            time.Now().UTC(),
+		Endpoint:             "http://node-b",
+		ReplayGroupID:        "replay-group-3",
+		ReplayEndpointIndex:  intPtr(1),
+		ReplayScheduledCount: 2,
+		StaticVerdict:        txExpectationSuccess,
+		PreflightVerdict:     txExpectationSuccess,
+	})
+	projection.RecordSendAttempt(txAttemptEvent{RunID: "run-1", AttemptID: "replay-a", Timestamp: time.Now().UTC(), Stage: txStageSend, SendStatus: txSendAccepted, Endpoint: "http://node-a", ReplayGroupID: "replay-group-3", ReplayEndpointIndex: intPtr(0), ReplayScheduledCount: 2})
+	projection.RecordSendAttempt(txAttemptEvent{RunID: "run-1", AttemptID: "replay-b", Timestamp: time.Now().UTC(), Stage: txStageSend, SendStatus: txSendAccepted, Endpoint: "http://node-b", ReplayGroupID: "replay-group-3", ReplayEndpointIndex: intPtr(1), ReplayScheduledCount: 2})
+	projection.RecordReceiptObservation(txReceiptObservationEvent{RunID: "run-1", AttemptID: "replay-a", Timestamp: time.Now().UTC(), ReceiptStatus: txReceiptConfirmed, Terminal: true}, 0)
+	projection.RecordReceiptObservation(txReceiptObservationEvent{RunID: "run-1", AttemptID: "replay-b", Timestamp: time.Now().UTC(), ReceiptStatus: txReceiptConfirmed, Terminal: true}, 0)
+
+	details, summary := projection.BuildReport()
+
+	assert.Zero(t, summary.AnomalyTypeCounts[string(txAnomalyCrossNodeOutcomeDisagreement)])
+	var predictionSource *txAnomalyEvent
+	for i := range details {
+		if details[i].Type == txAnomalyPredictionSourceDisagreement {
+			predictionSource = &details[i]
+			break
+		}
+	}
+	require.NotNil(t, predictionSource)
+	require.Len(t, predictionSource.ReplayNoiseAnnotations, 1)
+	assert.Equal(t, "ethrex", predictionSource.ReplayNoiseAnnotations[0].Client)
+	assert.Equal(t, "client_nonce_validation_error", predictionSource.ReplayNoiseAnnotations[0].ReasonCode)
+}
+
+func TestTxAnomalyProjectionReplayGroupStatusEventsIncludePreExpectationFailures(t *testing.T) {
+	projection := newTxAnomalyProjection()
+	projection.RecordSendAttempt(txAttemptEvent{
+		RunID:                "run-1",
+		AttemptID:            "replay-preflight-fail-a",
+		Timestamp:            time.Now().UTC(),
+		Stage:                txStageNonceFetch,
+		SendStatus:           txSendPreSendError,
+		Endpoint:             "http://node-a",
+		ReplayGroupID:        "replay-group-4",
+		ReplayEndpointIndex:  intPtr(0),
+		ReplayScheduledCount: 2,
+	})
+	projection.RecordSendAttempt(txAttemptEvent{
+		RunID:                "run-1",
+		AttemptID:            "replay-preflight-fail-b",
+		Timestamp:            time.Now().UTC(),
+		Stage:                txStageEndpointSelection,
+		SendStatus:           txSendPreSendError,
+		Endpoint:             "http://node-b",
+		ReplayGroupID:        "replay-group-4",
+		ReplayEndpointIndex:  intPtr(1),
+		ReplayScheduledCount: 2,
+	})
+
+	events := projection.ReplayGroupStatusEvents()
+
+	require.Len(t, events, 1)
+	assert.Equal(t, txExpectationReplayGroupStatusRecorded, events[0].Event)
+	require.NotNil(t, events[0].ReplayGroupComplete)
+	assert.False(t, *events[0].ReplayGroupComplete)
+	assert.Equal(t, "replay-group-4", events[0].ReplayGroupID)
+}
