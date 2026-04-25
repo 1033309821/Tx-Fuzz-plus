@@ -84,6 +84,37 @@ We use [`ethpandaops/ethereum-package`](https://github.com/ethpandaops/ethereum-
 ./scripts/run_ethereum_network.sh -c <ethereum-package.yaml>
 ```
 
+For full devnet reset / rebuild flows, ECST now also includes:
+
+```bash
+./scripts/reset-devnet.sh [OPTIONS] [config_file]
+```
+
+Examples:
+
+```bash
+# rebuild a devnet from the repository root
+./scripts/reset-devnet.sh ../ethpackage/network_params.yaml
+
+# rebuild and write endpoints to a project-local path
+./scripts/reset-devnet.sh -n eth5node -o output/endpoints.json ../ethpackage/network_params.yaml
+```
+
+`scripts/reset-devnet.sh` resolves **relative output paths against the current working directory**, not against the script directory.  
+For example, when run from the repository root:
+
+```bash
+./scripts/reset-devnet.sh -o output/endpoints.json ../ethpackage/network_params.yaml
+```
+
+the generated endpoints file is written to:
+
+```text
+./output/endpoints.json
+```
+
+not to `./scripts/output/endpoints.json`.
+
 That script (or your external env bootstrap) should produce an `endpoints.json` file. By default ECST now reads:
 
 ```text
@@ -94,6 +125,13 @@ You can override that path with either:
 
 - `environment.endpoints_file` in `config.yaml`
 - environment variable `ECST_ENDPOINTS_FILE`
+
+If you use `scripts/reset-devnet.sh` to write a project-local endpoints file such as `./output/endpoints.json`, make sure your config points to that same path:
+
+```yaml
+environment:
+  endpoints_file: ./output/endpoints.json
+```
 
 This file is the **source of truth** for dynamic environment data. It **strictly overrides**:
 
@@ -153,11 +191,24 @@ go build -o fuzz ./cmd/fuzz
 
 To run the new replay lane manually, enable `tx_fuzz.replay` in a config file and point `environment.endpoints_file` at a live runtime endpoints file.
 
+If you are rebuilding a devnet from the repository root with the bundled reset script, a practical sequence is:
+
+```bash
+./scripts/reset-devnet.sh -n eth5node -o output/endpoints.json ../ethpackage/network_params.yaml
+```
+
+and then:
+
+```yaml
+environment:
+  endpoints_file: ./output/endpoints.json
+```
+
 Example:
 
 ```yaml
 environment:
-  endpoints_file: ../ethpackage/endpoints.json
+  endpoints_file: ./output/endpoints.json
 
 output:
   directory: output/replay_manual
