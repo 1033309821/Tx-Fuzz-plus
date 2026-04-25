@@ -35,6 +35,60 @@ ethereum_genesis_generator_params:
   image: ethpandaops/ethereum-genesis-generator:5.0.5
 ```
 
+### Devnet reset and endpoints extraction script
+
+```bash
+./reset-devnet.sh [options] [config_file]
+```
+
+This script rebuilds a Kurtosis-based Ethereum devnet, cleans old enclaves, starts a fresh enclave, and writes a new `endpoints.json` file that ECST can use as its runtime topology source of truth.
+
+**Options:**
+- `-n, --name NAME`: Specify enclave name (default: `devnet`)
+- `-o, --output FILE`: Specify output file for generated endpoints data (default: `endpoints.json`)
+- `-h, --help`: Show help message
+
+**Important path behavior:**
+- Relative output paths are resolved against the **current working directory**
+- Relative config file paths are also resolved against the **current working directory**
+
+For example, when run from the repository root:
+
+```bash
+./scripts/reset-devnet.sh -o output/endpoints.json ../ethpackage/network_params.yaml
+```
+
+the generated file is written to:
+
+```text
+./output/endpoints.json
+```
+
+not to `./scripts/output/endpoints.json`.
+
+**Examples:**
+```bash
+# Rebuild a devnet and write endpoints.json in the current directory
+./scripts/reset-devnet.sh ../ethpackage/network_params.yaml
+
+# Rebuild a named enclave and write endpoints.json under the current directory
+./scripts/reset-devnet.sh -n eth5node -o output/endpoints.json ../ethpackage/network_params.yaml
+```
+
+**Recommended ECST usage:**
+
+If you generate a project-local endpoints file such as `./output/endpoints.json`, point ECST at the same file in your config:
+
+```yaml
+environment:
+  endpoints_file: ./output/endpoints.json
+```
+
+This is especially useful for:
+- `./fuzz <config.yaml>`
+- deterministic replay runs through `tx_fuzz.replay`
+- manual scenarios that should follow the currently running devnet topology
+
 ## Transaction Query Scripts
 
 ### Transaction Query Tool
@@ -231,6 +285,7 @@ This is a configuration file that contains RPC endpoint configurations used by m
 **Node Endpoints:**
 - Runtime endpoints should come from `~/ethpackage/endpoints.json`
 - Override path with `ECST_ENDPOINTS_FILE` when needed
+- If you generated a project-local endpoints file with `./scripts/reset-devnet.sh -o ...`, point ECST to that exact path
 - Avoid treating the hardcoded shell examples in older scripts as the source of truth
 
 This file is sourced by other scripts to maintain consistent RPC endpoint configuration across the toolkit, but the preferred runtime source of truth is now `endpoints.json`.
@@ -243,12 +298,13 @@ This file is sourced by other scripts to maintain consistent RPC endpoint config
 
 3. **Network Configuration**: The scripts are configured to work with a local Ethereum test network with 5 different client implementations.
 
-4. **File Permissions**: Make sure all scripts have execute permissions:
+4. **Runtime topology source of truth**: Prefer a freshly generated `endpoints.json` file from a live devnet reset or bootstrap flow over stale hardcoded RPC values.
+
+5. **File Permissions**: Make sure all scripts have execute permissions:
    ```bash
    chmod +x *.sh
    ```
 
-5. **Help Information**: All scripts support `--help` or `-h` option to display detailed usage information.
+6. **Help Information**: All scripts support `--help` or `-h` option to display detailed usage information.
 
 For more detailed information about each script, run the script with the `--help` option.
-
