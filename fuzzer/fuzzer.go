@@ -97,13 +97,16 @@ func (f *FuzzClient) StartTxFuzzing(cfg *TxFuzzConfig, accounts []config.Account
 	return nil
 }
 
-// StopTxFuzzing stops the transaction fuzzing process
-func (f *FuzzClient) StopTxFuzzing() {
-	if f.txFuzzer != nil {
-		f.txFuzzer.Stop()
-		f.txFuzzer = nil
-		f.logger.Info("Transaction fuzzing stopped")
+// StopTxFuzzing stops the transaction fuzzing process and returns a final summary.
+func (f *FuzzClient) StopTxFuzzing() *TxRunSummary {
+	if f.txFuzzer == nil {
+		return nil
 	}
+
+	summary := f.txFuzzer.Finalize(time.Now())
+	f.txFuzzer = nil
+	f.logger.Info("Transaction fuzzing stopped")
+	return &summary
 }
 
 // IsTxFuzzingActive returns true if transaction fuzzing is currently active

@@ -127,25 +127,24 @@ func main() {
 	// Create transaction fuzzing configuration with mutation support
 	txCfg := cfg.GetTxFuzzingConfig()
 
-	// Get RPC endpoints from config.yaml
-	rpcEndpoints := []string{
-		"http://172.16.0.11:8545",
-		"http://172.16.0.12:8545",
-		"http://172.16.0.13:8545",
-		"http://172.16.0.14:8545",
-		"http://172.16.0.15:8545",
+	rpcEndpoints := txCfg.RPCEndpoints
+	if len(rpcEndpoints) == 0 && txCfg.RPCEndpoint != "" {
+		rpcEndpoints = []string{txCfg.RPCEndpoint}
+	}
+	if len(rpcEndpoints) == 0 {
+		log.Fatalf("No RPC endpoints available from loaded environment configuration")
+	}
+
+	loadDistribution := make(map[string]float64, len(rpcEndpoints))
+	weight := 1.0 / float64(len(rpcEndpoints))
+	for _, endpoint := range rpcEndpoints {
+		loadDistribution[endpoint] = weight
 	}
 
 	// Create multi-node configuration
 	multiNodeConfig := &fuzzer.MultiNodeConfig{
-		RPCEndpoints: rpcEndpoints,
-		LoadDistribution: map[string]float64{
-			"http://172.16.0.11:8545": 0.2,
-			"http://172.16.0.12:8545": 0.2,
-			"http://172.16.0.13:8545": 0.2,
-			"http://172.16.0.14:8545": 0.2,
-			"http://172.16.0.15:8545": 0.2,
-		},
+		RPCEndpoints:        rpcEndpoints,
+		LoadDistribution:    loadDistribution,
 		FailoverEnabled:     true,
 		HealthCheckInterval: 30 * time.Second,
 		MaxRetries:          3,

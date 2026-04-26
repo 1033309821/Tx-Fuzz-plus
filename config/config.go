@@ -1,9 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -11,17 +14,18 @@ import (
 
 // Config represents the main configuration structure
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Mode       string           `yaml:"mode"`
-	P2P        P2PConfig        `yaml:"p2p"`
-	Fuzzing    FuzzingConfig    `yaml:"fuzzing"`
-	TxFuzzing  TxFuzzingConfig  `yaml:"tx_fuzz"`
-	Monitoring MonitoringConfig `yaml:"monitoring"`
-	Output     OutputConfig     `yaml:"output"`
-	Log        LogConfig        `yaml:"log"`
-	Paths      PathsConfig      `yaml:"paths"`
-	Test       TestConfig       `yaml:"test"`
-	Accounts   []Account        `yaml:"accounts"`
+	Server      ServerConfig      `yaml:"server"`
+	Mode        string            `yaml:"mode"`
+	P2P         P2PConfig         `yaml:"p2p"`
+	Fuzzing     FuzzingConfig     `yaml:"fuzzing"`
+	TxFuzzing   TxFuzzingConfig   `yaml:"tx_fuzz"`
+	Monitoring  MonitoringConfig  `yaml:"monitoring"`
+	Output      OutputConfig      `yaml:"output"`
+	Log         LogConfig         `yaml:"log"`
+	Paths       PathsConfig       `yaml:"paths"`
+	Test        TestConfig        `yaml:"test"`
+	Environment EnvironmentConfig `yaml:"environment"`
+	Accounts    []Account         `yaml:"accounts"`
 
 	// Transaction defaults - can be configured or use defaults
 	ChainIDValue          int64  `yaml:"chain_id"`
@@ -32,6 +36,7 @@ type Config struct {
 	ChainID          *big.Int
 	DefaultGasTipCap *big.Int
 	DefaultGasFeeCap *big.Int
+	Runtime          RuntimeEndpoints `yaml:"-"`
 }
 
 type Account struct {
@@ -66,15 +71,31 @@ type FuzzingConfig struct {
 
 // TxFuzzingConfig holds transaction fuzzing configuration
 type TxFuzzingConfig struct {
-	Enabled         bool   `yaml:"enabled"`
-	RPCEndpoint     string `yaml:"rpc_endpoint"`
-	ChainID         int64  `yaml:"chain_id"`
-	MaxGasPrice     int64  `yaml:"max_gas_price"` // in wei
-	MaxGasLimit     uint64 `yaml:"max_gas_limit"`
-	TxPerSecond     int    `yaml:"tx_per_second"`
-	FuzzDurationSec int    `yaml:"fuzz_duration_sec"`
-	Seed            int64  `yaml:"seed"`
-	UseAccounts     bool   `yaml:"use_accounts"` // whether to use predefined accounts
+	Enabled                 bool              `yaml:"enabled"`
+	RPCEndpoint             string            `yaml:"rpc_endpoint"`
+	RPCEndpoints            []string          `yaml:"rpc_endpoints"`
+	ChainID                 int64             `yaml:"chain_id"`
+	MaxGasPrice             int64             `yaml:"max_gas_price"` // in wei
+	MaxGasLimit             uint64            `yaml:"max_gas_limit"`
+	TxPerSecond             int               `yaml:"tx_per_second"`
+	FuzzDurationSec         int               `yaml:"fuzz_duration_sec"`
+	Seed                    int64             `yaml:"seed"`
+	UseAccounts             bool              `yaml:"use_accounts"` // whether to use predefined accounts
+	TxResultMappingEnabled  bool              `yaml:"tx_result_mapping_enabled"`
+	TxResultLogPath         string            `yaml:"tx_result_log_path"`
+	ReceiptDrainDurationSec int               `yaml:"receipt_drain_duration_sec"`
+	EnableTracking          bool              `yaml:"enable_tracking"`
+	ConfirmBlocks           uint64            `yaml:"confirm_blocks"`
+	Replay                  TxReplayConfig    `yaml:"replay"`
+	EndpointLabels          map[string]string `yaml:"-"`
+}
+
+type TxReplayConfig struct {
+	Enabled           bool   `yaml:"enabled"`
+	GroupCount        int    `yaml:"group_count"`
+	EndpointsPerGroup int    `yaml:"endpoints_per_group"`
+	TxType            string `yaml:"tx_type"`
+	PayloadSize       int    `yaml:"payload_size"`
 }
 
 // TxFuzzerConfig holds transaction fuzzer configuration
@@ -112,10 +133,36 @@ type LogConfig struct {
 	IncludeDetails bool   `yaml:"include_details"`
 }
 
+type EnvironmentConfig struct {
+	EndpointsFile string `yaml:"endpoints_file"`
+}
+
 // PathsConfig holds file paths configuration
 type PathsConfig struct {
 	TxHashes    string `yaml:"tx_hashes"`
 	TxHashesExt string `yaml:"tx_hashes_ext"`
+}
+
+type RuntimeEndpoints struct {
+	ExecutionNodes []ExecutionNodeEndpoint `json:"execution_nodes"`
+	ConsensusNodes []ConsensusNodeEndpoint `json:"consensus_nodes"`
+}
+
+type ExecutionNodeEndpoint struct {
+	Index     int    `json:"index"`
+	ELClient  string `json:"el_client"`
+	CLClient  string `json:"cl_client"`
+	RPC       string `json:"rpc"`
+	WS        string `json:"ws"`
+	EngineRPC string `json:"engine_rpc"`
+	Enode     string `json:"enode"`
+}
+
+type ConsensusNodeEndpoint struct {
+	Index    int    `json:"index"`
+	CLClient string `json:"cl_client"`
+	ELClient string `json:"el_client"`
+	Beacon   string `json:"beacon"`
 }
 
 // TestConfig holds test-related configuration
@@ -344,7 +391,91 @@ func LoadConfig(configPath string) (*Config, error) {
 		config.DefaultGasFeeCap = gasFeeCap
 	}
 
+	if err := applyEndpointsOverride(&config); err != nil {
+		return nil, err
+	}
+
 	return &config, nil
+}
+
+func applyEndpointsOverride(config *Config) error {
+	endpointsPath, err := resolveEndpointsFilePath(config.Environment.EndpointsFile)
+	if err != nil {
+		return err
+	}
+
+	data, err := os.ReadFile(endpointsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read endpoints file: %w", err)
+	}
+
+	var runtime RuntimeEndpoints
+	if err := json.Unmarshal(data, &runtime); err != nil {
+		return fmt.Errorf("failed to parse endpoints file: %w", err)
+	}
+
+	if len(runtime.ExecutionNodes) == 0 {
+		return fmt.Errorf("invalid endpoints file: no execution nodes")
+	}
+
+	bootstrapNodes := make([]string, 0, len(runtime.ExecutionNodes))
+	nodeNames := make([]string, 0, len(runtime.ExecutionNodes))
+	rpcEndpoints := make([]string, 0, len(runtime.ExecutionNodes))
+
+	for _, node := range runtime.ExecutionNodes {
+		if node.ELClient == "" || node.CLClient == "" || node.RPC == "" || node.EngineRPC == "" || node.Enode == "" {
+			return fmt.Errorf("invalid execution node: index %d missing required fields", node.Index)
+		}
+
+		bootstrapNodes = append(bootstrapNodes, node.Enode)
+		nodeNames = append(nodeNames, fmt.Sprintf("%s-%s", node.ELClient, node.CLClient))
+		rpcEndpoints = append(rpcEndpoints, normalizeHTTPURL(node.RPC))
+	}
+
+	config.Environment.EndpointsFile = endpointsPath
+	config.P2P.BootstrapNodes = bootstrapNodes
+	config.P2P.NodeNames = nodeNames
+	config.TxFuzzing.RPCEndpoints = rpcEndpoints
+	config.TxFuzzing.RPCEndpoint = rpcEndpoints[0]
+	config.Runtime = runtime
+
+	return nil
+}
+
+func resolveEndpointsFilePath(configuredPath string) (string, error) {
+	if envPath := strings.TrimSpace(os.Getenv("ECST_ENDPOINTS_FILE")); envPath != "" {
+		return expandPath(envPath)
+	}
+	if configuredPath != "" {
+		return expandPath(configuredPath)
+	}
+	return expandPath("~/ethpackage/endpoints.json")
+}
+
+func expandPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("endpoints file path is empty")
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve home directory: %w", err)
+		}
+		if path == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, path[2:]), nil
+	}
+	return path, nil
+}
+
+func normalizeHTTPURL(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+		return value
+	}
+	return "http://" + value
 }
 
 // GetServerAddress returns the full server address
@@ -401,7 +532,45 @@ func (c *Config) IsTxFuzzingEnabled() bool {
 
 // GetTxFuzzingConfig returns the transaction fuzzing configuration
 func (c *Config) GetTxFuzzingConfig() TxFuzzingConfig {
-	return c.TxFuzzing
+	txCfg := c.TxFuzzing
+	if len(c.Runtime.ExecutionNodes) == 0 {
+		return txCfg
+	}
+	txCfg.EndpointLabels = make(map[string]string, len(c.Runtime.ExecutionNodes))
+	for _, node := range c.Runtime.ExecutionNodes {
+		if node.RPC == "" || node.ELClient == "" {
+			continue
+		}
+		txCfg.EndpointLabels[normalizeHTTPURL(node.RPC)] = node.ELClient
+	}
+	return txCfg
+}
+
+func (c *Config) GetRPCURL(index int) string {
+	if len(c.TxFuzzing.RPCEndpoints) == 0 {
+		if index == 0 && c.TxFuzzing.RPCEndpoint != "" {
+			return normalizeHTTPURL(c.TxFuzzing.RPCEndpoint)
+		}
+		return ""
+	}
+	if index < 0 || index >= len(c.TxFuzzing.RPCEndpoints) {
+		return ""
+	}
+	return c.TxFuzzing.RPCEndpoints[index]
+}
+
+func (c *Config) GetEngineRPCAddress(index int) string {
+	if index < 0 || index >= len(c.Runtime.ExecutionNodes) {
+		return ""
+	}
+	return c.Runtime.ExecutionNodes[index].EngineRPC
+}
+
+func (c *Config) GetBeaconURL(index int) string {
+	if index < 0 || index >= len(c.Runtime.ConsensusNodes) {
+		return ""
+	}
+	return normalizeHTTPURL(c.Runtime.ConsensusNodes[index].Beacon)
 }
 
 // PrintConfig prints the current configuration (for debugging)
@@ -420,11 +589,15 @@ func (c *Config) PrintConfig() {
 	fmt.Printf("Transaction Fuzzing Enabled: %t\n", c.TxFuzzing.Enabled)
 	if c.TxFuzzing.Enabled {
 		fmt.Printf("  RPC Endpoint: %s\n", c.TxFuzzing.RPCEndpoint)
+		if len(c.TxFuzzing.RPCEndpoints) > 0 {
+			fmt.Printf("  RPC Endpoints: %v\n", c.TxFuzzing.RPCEndpoints)
+		}
 		fmt.Printf("  Chain ID: %d\n", c.TxFuzzing.ChainID)
 		fmt.Printf("  Max Gas Price: %d wei\n", c.TxFuzzing.MaxGasPrice)
 		fmt.Printf("  Tx Per Second: %d\n", c.TxFuzzing.TxPerSecond)
 		fmt.Printf("  Duration: %d seconds\n", c.TxFuzzing.FuzzDurationSec)
 	}
+	fmt.Printf("Endpoints File: %s\n", c.Environment.EndpointsFile)
 	fmt.Printf("Monitoring Enabled: %t\n", c.Monitoring.Enabled)
 	fmt.Printf("Output Directory: %s\n", c.Output.Directory)
 	fmt.Printf("Accounts Count: %d\n", len(c.Accounts))

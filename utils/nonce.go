@@ -47,9 +47,10 @@ func GetNonceWithRetry(client *ethclient.Client, address common.Address, maxRetr
 	var nonce uint64
 	var err error
 
-	// Create RPC client from node IP
-	nodeIP := client.GetNodeIP()
-	rpcURL := fmt.Sprintf("http://%s:8545", nodeIP) // Standard RPC port
+	rpcURL := client.GetRPCURL()
+	if rpcURL == "" {
+		return 0, fmt.Errorf("failed to resolve RPC URL for nonce retrieval")
+	}
 
 	rpcClient, err := gethclient.Dial(rpcURL)
 	if err != nil {

@@ -20,6 +20,7 @@ type Client struct {
 	node     *enode.Node
 	nodeName string
 	nodeIP   string
+	rpcURL   string
 	config   *config.Config
 }
 
@@ -53,7 +54,7 @@ func NewClient(cfg *config.Config, nodeIndex int) (*Client, error) {
 	}
 
 	// Create suite (unified creation logic)
-	suite, err := ethtest.NewSuite(node, nodeIP+":8551", common.Bytes2Hex(jwtSecret[:]), nodeName)
+	suite, err := ethtest.NewSuite(node, cfg.GetEngineRPCAddress(nodeIndex), common.Bytes2Hex(jwtSecret[:]), nodeName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create suite for %s: %w", nodeName, err)
 	}
@@ -63,6 +64,7 @@ func NewClient(cfg *config.Config, nodeIndex int) (*Client, error) {
 		node:     node,
 		nodeName: nodeName,
 		nodeIP:   nodeIP,
+		rpcURL:   cfg.GetRPCURL(nodeIndex),
 		config:   cfg,
 	}, nil
 }
@@ -95,6 +97,10 @@ func (c *Client) GetNodeName() string {
 // GetNodeIP returns the node IP address
 func (c *Client) GetNodeIP() string {
 	return c.nodeIP
+}
+
+func (c *Client) GetRPCURL() string {
+	return c.rpcURL
 }
 
 // Dial establishes a connection to the node

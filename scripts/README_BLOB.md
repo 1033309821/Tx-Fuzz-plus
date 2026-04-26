@@ -79,7 +79,7 @@
 ./scripts/query_tx.sh 0x1234567890abcdef...
 
 # 从文件读取
-./scripts/query_tx.sh -f cmd/manual/txhashes.txt
+./scripts/query_tx.sh -f txhashes.txt
 ```
 
 ---
@@ -102,13 +102,12 @@
 
 ```bash
 # 1. 编译并运行测试
-cd cmd/manual
-go build -o manual
-./manual -mode blob-single
+go build -o manual ./cmd/manual
+./manual -config ./config.yaml -mode blob-single
 
 # 2. 查询生成的交易
-cd ../../scripts
-./query_blob_tx.sh -f ../cmd/manual/txhashes.txt
+cd scripts
+./query_blob_tx.sh -f ../txhashes.txt
 
 # 或者查询特定的交易哈希
 ./query_blob_tx.sh 0xYOUR_TRANSACTION_HASH
@@ -138,11 +137,11 @@ export BEACON_ENDPOINT="http://localhost:4000"
 
 ```bash
 # 运行测试
-cd cmd/manual && ./manual -mode blob-single
+./manual -config ./config.yaml -mode blob-single
 
 # 立即查询结果
-cd ../../scripts
-./query_blob_tx.sh -f ../cmd/manual/txhashes.txt
+cd scripts
+./query_blob_tx.sh -f ../txhashes.txt
 ```
 
 ### 场景 2：检查特定交易的 Blob 数据

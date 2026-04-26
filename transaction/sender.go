@@ -390,7 +390,7 @@ func SendTxs(s *ethtest.Suite, txs []*types.Transaction) error {
 		case *eth.GetBlockHeadersPacket:
 			headers, err := s.GetChain().GetHeaders(msg)
 			if err != nil {
-				fmt.Errorf("invalid GetBlockHeaders request: %v", err)
+				return fmt.Errorf("invalid GetBlockHeaders request: %v", err)
 			}
 			recvConn.Write(1, eth.BlockHeadersMsg, &eth.BlockHeadersPacket{
 				RequestId:           msg.RequestId,

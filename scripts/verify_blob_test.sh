@@ -18,7 +18,7 @@ NC='\033[0m' # No Color
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-MANUAL_DIR="$PROJECT_ROOT/cmd/manual"
+MANUAL_BIN="$PROJECT_ROOT/manual"
 
 # Show usage
 show_usage() {
@@ -42,7 +42,7 @@ show_usage() {
 # Parse command line arguments
 TEST_MODE=""
 NO_VERIFY=false
-CONFIG_FILE="$MANUAL_DIR/config.yaml"
+CONFIG_FILE="$PROJECT_ROOT/config.yaml"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -84,9 +84,9 @@ echo ""
 
 # Step 1: Build the manual tool
 echo -e "${BLUE}[Step 1/4]${NC} Building manual tool..."
-cd "$MANUAL_DIR" || exit 1
+cd "$PROJECT_ROOT" || exit 1
 
-if go build -o manual 2>&1; then
+if go build -o "$MANUAL_BIN" ./cmd/manual 2>&1; then
     echo -e "${GREEN}✓${NC} Build successful"
 else
     echo -e "${RED}✗${NC} Build failed"
@@ -108,7 +108,7 @@ echo "Test mode: $TEST_MODE"
 echo ""
 
 # Run the test and capture output
-./manual -config "$CONFIG_FILE" -mode "$TEST_MODE" 2>&1 | tee /tmp/blob_test_output_$$.log
+"$MANUAL_BIN" -config "$CONFIG_FILE" -mode "$TEST_MODE" 2>&1 | tee /tmp/blob_test_output_$$.log
 
 TEST_EXIT_CODE=${PIPESTATUS[0]}
 
@@ -124,7 +124,7 @@ echo ""
 echo -e "${BLUE}[Step 3/4]${NC} Extracting transaction hashes from output..."
 
 # Try to find txhashes.txt file
-TXHASH_FILE="$MANUAL_DIR/txhashes.txt"
+TXHASH_FILE="$PROJECT_ROOT/txhashes.txt"
 if [[ -f "$TXHASH_FILE" ]]; then
     cp "$TXHASH_FILE" "$TX_OUTPUT_FILE"
     TX_COUNT=$(wc -l < "$TX_OUTPUT_FILE")

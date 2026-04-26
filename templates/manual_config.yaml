@@ -1,5 +1,7 @@
-
 mode: "manual"
+
+environment:
+  endpoints_file: "~/ethpackage/endpoints.json"
 
 testMode: true
 
@@ -7,12 +9,7 @@ p2p:
   enabled: true
   max_peers: 25
   listen_port: 30303
-  bootstrap_nodes:
-    - "enode://8e7b1b24dc1b1d0685081523ea8d84d6d8c8493f42fc64a5e210d17f9bfe3594b389e893476de995905a1fcc48ccd268768e5fc4e6490863e4e1131f285efbbf@172.16.0.11:30303"
-    - "enode://7b3b1b24dc1b1d0685081523ea8d84d6d8c8493f42fc64a5e210d17f9bfe3594b389e893476de995905a1fcc48ccd268768e5fc4e6490863e4e1131f285efbbf@172.16.0.12:30303"
-    - "enode://9c4b1b24dc1b1d0685081523ea8d84d6d8c8493f42fc64a5e210d17f9bfe3594b389e893476de995905a1fcc48ccd268768e5fc4e6490863e4e1131f285efbbf@172.16.0.13:30303"
-    - "enode://ad5b1b24dc1b1d0685081523ea8d84d6d8c8493f42fc64a5e210d17f9bfe3594b389e893476de995905a1fcc48ccd268768e5fc4e6490863e4e1131f285efbbf@172.16.0.14:30303"
-    - "enode://be6b1b24dc1b1d0685081523ea8d84d6d8c8493f42fc64a5e210d17f9bfe3594b389e893476de995905a1fcc48ccd268768e5fc4e6490863e4e1131f285efbbf@172.16.0.15:30303"
+  # Fixed secret kept in YAML; dynamic node topology comes from endpoints.json
   jwt_secret: "f79ae8046bc11c9927afe911db7143c51a806c4a537cc08e0d37140b0192f430"
 
 server:

@@ -8,10 +8,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
-	"github.com/ethereum/go-ethereum/p2p/enode"
 
 	"github.com/1033309821/ECST/config"
-	ethtest "github.com/1033309821/ECST/devp2p/protocol/eth"
 	"github.com/1033309821/ECST/ethclient"
 	"github.com/1033309821/ECST/transaction"
 	"github.com/1033309821/ECST/utils"
@@ -36,20 +34,9 @@ func (t *GetPooledTxsTest) Run(cfg *config.Config) error {
 		return fmt.Errorf("invalid node index: %d, valid range: 0-%d", nodeIndex, cfg.GetNodeCount()-1)
 	}
 
-	jwtSecret, err := transaction.ParseJWTSecretFromHexString(cfg.P2P.JWTSecret)
+	s, _, err := newSuiteForNode(cfg, nodeIndex)
 	if err != nil {
-		return fmt.Errorf("failed to parse JWT secret: %v", err)
-	}
-
-	enodeStr := cfg.P2P.BootstrapNodes[nodeIndex]
-	node, err := enode.Parse(enode.ValidSchemes, enodeStr)
-	if err != nil {
-		return fmt.Errorf("failed to parse enode: %v", err)
-	}
-
-	s, err := ethtest.NewSuite(node, node.IP().String()+":8551", common.Bytes2Hex(jwtSecret[:]), cfg.GetNodeName(nodeIndex))
-	if err != nil {
-		return fmt.Errorf("failed to create suite: %v", err)
+		return err
 	}
 
 	txHashes := []common.Hash{}
